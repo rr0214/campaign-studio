@@ -5,3 +5,4 @@ __pycache__/
 chroma_db/
 evals/eval_results.csv
 evals/brand_safety_eval_results.csv
+.streamlit/
