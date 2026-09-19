@@ -199,11 +199,11 @@ with st.sidebar:
         st.markdown("""
 **Three agents, one trust gate:**
 
-1. **Research (RAG · GPT-4o-mini + text-embedding-3-small)** — Retrieves Verdant brand document chunks via ChromaDB, generates a grounded research summary, and scores retrieval quality (0–1). Below 0.70 → pipeline stops.
+1. **Research (RAG · GPT-4o-mini + text-embedding-3-small)** — Retrieves Verdant brand document chunks via ChromaDB, generates a grounded research summary, and scores retrieval quality (0–1). That score measures whether retrieval *found* relevant documents — it is reported, not used as the gate.
 
 2. **Strategy (GPT-4o-mini + Policy Check)** — Builds the campaign concept from Agent 1's research. Checks every factual claim against brand policy — prohibited claims like "carbon neutral" are blocked outright.
 
-3. **Creative (GPT-4o-mini + Veo 2)** — Writes the caption (GPT-4o-mini) and video prompt (Veo 2). Only runs if both upstream agents passed. No upstream approval = no content generated.
+3. **Creative (GPT-4o-mini + Veo 2)** — Before generating anything, the campaign text is checked against the documents Agent 1 actually retrieved: deterministic checks first (prohibited phrases, unapproved statistics, competitor names), then an LLM judge on whatever survives. Only text that passes both gets a caption and video.
 
 The trust gate is a hard stop, not a review queue. Content is blocked before it's created.
         """)
@@ -256,44 +256,111 @@ run_btn = st.button(btn_label, type="primary")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-MOCK_FEEDBACK = [
-    {
-        "ctr": 3.4, "engagement_rate": 4.2, "views": 12400,
-        "comments": [
-            "Love the recycled materials angle — feels so authentic",
-            "87% certified sustainable is impressive, keep leading on this",
-            "This is the brand story I've been waiting for",
-        ],
-        "insight": "Sustainability credentials resonating strongly. Audience wants more depth on eco commitment.",
-    },
-    {
-        "ctr": 4.1, "engagement_rate": 5.8, "views": 18200,
-        "comments": [
-            "Are you guys fully carbon neutral yet? Feels like you're so close",
-            "Most eco-committed brand I follow tbh",
-            "Love this green mission, keep pushing it further",
-        ],
-        "insight": "Eco narrative driving strong engagement. Audience asking about carbon commitment — lean in.",
-    },
-    {
-        "ctr": 4.7, "engagement_rate": 6.3, "views": 24100,
-        "comments": [
-            "I thought you were already carbon neutral honestly",
-            "Zero waste vibes, love it",
-            "The most sustainable activewear brand, period",
-        ],
-        "insight": "Audience perceiving stronger claims than made. CTR up 38% from baseline — double down.",
-    },
-    {
-        "ctr": 5.2, "engagement_rate": 7.1, "views": 31000,
-        "comments": [
-            "Carbon neutral queen era 👑",
-            "Fully sustainable from production to delivery right?",
-            "B Corp certified soon?? 👀 you deserve it",
-        ],
-        "insight": "Peak engagement. Audience now expecting certifications not yet earned. Trust risk undetected.",
-    },
+# Audience comments on each published campaign. Comments only — no CTR, no
+# engagement rate, no view counts, no "insight" telling the next cycle what to
+# lean into. There is nothing here to optimize toward; the next brief carries
+# what people said, and the grounding check still decides what can be claimed.
+#
+# Indexed by how many campaigns have actually been approved and published, not
+# by cycle number: a halted cycle was never published, so nobody commented on it.
+AUDIENCE_COMMENTS = [
+    [
+        "Love the recycled materials angle — feels so authentic",
+        "87% certified sustainable is impressive, keep leading on this",
+        "This is the brand story I've been waiting for",
+    ],
+    [
+        "Are you guys fully carbon neutral yet? Feels like you're so close",
+        "Most eco-committed brand I follow tbh",
+        "Love this green mission, keep pushing it further",
+    ],
+    [
+        "I thought you were already carbon neutral honestly",
+        "Zero waste vibes, love it",
+        "The most sustainable activewear brand, period",
+    ],
+    [
+        "Carbon neutral queen era 👑",
+        "Fully sustainable from production to delivery right?",
+        "B Corp certified soon?? 👀 you deserve it",
+    ],
 ]
+
+
+def render_grounding_record(creative):
+    """
+    Show what the grounding check flagged, the source line it ran into, and how
+    the rewrite corrected it — side by side, so a reviewer reads the claim
+    against the evidence rather than against a score.
+    """
+    if not creative.grounding_events or not creative.flagged_claim:
+        return
+
+    if creative.rewrite_fixed:
+        banner_bg, banner_border, banner_fg = "#f0fdf4", "#bbf7d0", "#16a34a"
+        banner = "✅ Flagged on the first draft · corrected on the rewrite · re-checked and cleared"
+    elif creative.rewrite_attempted:
+        banner_bg, banner_border, banner_fg = "#fdf4ff", "#c084fc", "#7c3aed"
+        banner = "🛑 Flagged · rewritten once · still failed the re-check · halted for human review"
+    else:
+        banner_bg, banner_border, banner_fg = "#fdf4ff", "#c084fc", "#7c3aed"
+        banner = "🛑 Flagged · halted before any rewrite"
+
+    layer_label = {
+        "deterministic": "deterministic check (no model call)",
+        "judge": "LLM judge",
+    }.get(creative.check_layer, creative.check_layer or "—")
+
+    st.markdown(
+        f"<div style='background:{banner_bg}; border:1px solid {banner_border}; border-radius:8px; "
+        f"padding:10px 14px; margin:8px 0; font-size:0.85rem; color:{banner_fg}; font-weight:600;'>"
+        f"{banner}</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Caught by: {layer_label} · {creative.failure_type or ''}")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.06em; "
+                    "text-transform:uppercase; color:#dc2626; margin-bottom:6px;'>Flagged claim</div>",
+                    unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:0.85rem; color:#374151; line-height:1.55;'>"
+                    f"{creative.flagged_claim}</div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown("<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.06em; "
+                    "text-transform:uppercase; color:#64748b; margin-bottom:6px;'>What the source says</div>",
+                    unsafe_allow_html=True)
+        if creative.source_line:
+            st.markdown(f"<div style='font-size:0.85rem; color:#374151; line-height:1.55; "
+                        f"font-style:italic;'>“{creative.source_line}”</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='font-size:0.85rem; color:#94a3b8; line-height:1.55;'>"
+                        "No retrieved document addresses this claim — there is no source to check it "
+                        "against, which is its own problem.</div>", unsafe_allow_html=True)
+    with c3:
+        st.markdown("<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.06em; "
+                    "text-transform:uppercase; color:#16a34a; margin-bottom:6px;'>Corrected version</div>",
+                    unsafe_allow_html=True)
+        if creative.corrected_claim:
+            st.markdown(f"<div style='font-size:0.85rem; color:#374151; line-height:1.55;'>"
+                        f"{creative.corrected_claim}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='font-size:0.85rem; color:#94a3b8; line-height:1.55;'>"
+                        "No accepted correction.</div>", unsafe_allow_html=True)
+
+    if creative.rewrite_attempted and creative.revised_draft:
+        with st.expander("Both drafts", expanded=not creative.rewrite_fixed):
+            d1, d2 = st.columns(2)
+            with d1:
+                st.markdown("**Draft 1 — as written**")
+                st.markdown(f"<div style='font-size:0.85rem; color:#6b7280; line-height:1.6; "
+                            f"white-space:pre-wrap;'>{creative.original_draft}</div>",
+                            unsafe_allow_html=True)
+            with d2:
+                st.markdown("**Draft 2 — after rewrite**")
+                st.markdown(f"<div style='font-size:0.85rem; color:#374151; line-height:1.6; "
+                            f"white-space:pre-wrap;'>{creative.revised_draft}</div>",
+                            unsafe_allow_html=True)
 
 
 def run_single_campaign(user_prompt, config, campaign_history=None, series_position=1):
@@ -346,7 +413,7 @@ if run_btn and user_prompt.strip():
     if num_campaigns > 1:
         pipeline_status.markdown(f"**Series** — {num_campaigns} campaigns")
         st.markdown(f"<h2 style='font-size:1.2rem; font-weight:700; text-align:center;'>Campaign Scheduler — {num_campaigns} {schedule.lower()} drops</h2>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size:0.85rem; color:#94a3b8; text-align:center; margin-bottom:1rem;'>Each campaign runs automatically, feeds in overnight engagement data, and briefs the next — simulating a real content calendar running without human review.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size:0.85rem; color:#94a3b8; text-align:center; margin-bottom:1rem;'>Each campaign briefs the next with its approved copy and what the audience said about it. Brand facts are re-retrieved from source every cycle, and every cycle passes the grounding check before anything is generated.</p>", unsafe_allow_html=True)
 
         completed = []
         campaign_history = []
@@ -381,17 +448,12 @@ if run_btn and user_prompt.strip():
                         query=research_query,
                         include_poisoned=config["include_poisoned"],
                         simulate_low_confidence=config["simulate_low_confidence"],
-                        campaign_history=campaign_history if i > 0 else None,
                         series_position=i + 1,
                     )
                     t1 = time.time()
                     gs = research.grounding_score
                     score_class = "trust-high" if gs >= 0.70 else "trust-medium" if gs >= 0.50 else "trust-low"
                     st.markdown(f"**Brand grounding:** <span class='{score_class}'>{gs:.2f}</span>", unsafe_allow_html=True)
-                    if i > 0 and completed:
-                        prev_score = completed[-1]["research"].grounding_score
-                        if gs < prev_score - 0.05:
-                            st.warning(f"↓ Grounding dropped {prev_score:.2f} → {gs:.2f} — brand claims drifting from source docs")
                     s1.update(label=f"✅ Research complete — grounding {gs:.2f}", state="complete", expanded=False)
 
                 with st.status("📣 Building campaign strategy...", expanded=True) as s2:
@@ -399,7 +461,7 @@ if run_btn and user_prompt.strip():
                         research=research,
                         campaign_brief=user_prompt,
                         trust_aware=config["trust_aware"],
-                        campaign_history=campaign_history if i > 0 else None,
+                        campaign_history=campaign_history or None,
                         series_position=i + 1,
                     )
                     t2 = time.time()
@@ -417,6 +479,11 @@ if run_btn and user_prompt.strip():
                 with st.status("🎬 Generating creative...", expanded=True) as s3:
                     creative = run_creative_execution(strategy=strategy, brand_name="Verdant")
                     t3 = time.time()
+                    if creative.rewrite_attempted:
+                        st.caption(
+                            "Grounding check flagged the first draft · one rewrite attempted · "
+                            + ("re-check passed" if creative.rewrite_fixed else "re-check failed")
+                        )
                     if creative.status == "HALTED":
                         s3.update(label="🛑 Trust gate fired — no creative generated", state="error", expanded=False)
                     else:
@@ -432,7 +499,23 @@ if run_btn and user_prompt.strip():
                     else f"{creative.tagline} | grounding={research.grounding_score:.2f}"
                 )
 
-            feedback = MOCK_FEEDBACK[i] if i < len(MOCK_FEEDBACK) else None
+            approved = creative.status != "HALTED"
+
+            # Comments belong to published campaigns. A halted cycle was never
+            # published, so it collects none — and contributes nothing to the
+            # next brief. The rejected draft is never passed forward.
+            comments = (
+                AUDIENCE_COMMENTS[len(campaign_history)]
+                if approved and len(campaign_history) < len(AUDIENCE_COMMENTS)
+                else []
+            )
+
+            campaign_span.set_attribute("campaign.approved", approved)
+            campaign_span.set_attribute("campaign.check_layer", creative.check_layer or "none")
+            campaign_span.set_attribute("campaign.failure_type", creative.failure_type or "")
+            campaign_span.set_attribute("campaign.flagged_claim", creative.flagged_claim or "")
+            campaign_span.set_attribute("campaign.rewrite_attempted", creative.rewrite_attempted)
+            campaign_span.set_attribute("campaign.rewrite_fixed", creative.rewrite_fixed)
 
             completed.append({
                 "n": i + 1,
@@ -441,40 +524,44 @@ if run_btn and user_prompt.strip():
                 "strategy": strategy,
                 "creative": creative,
                 "elapsed": t3 - t0,
-                "feedback": feedback,
+                "comments": comments,
             })
 
-            if feedback and i < num_campaigns - 1 and creative.status != "HALTED":
+            render_grounding_record(creative)
+
+            if comments and i < num_campaigns - 1:
+                comment_html = "".join(
+                    f"<div style='font-size:0.85rem; color:#374151; line-height:1.6;'>“{c}”</div>"
+                    for c in comments
+                )
                 st.markdown(f"""
-                <div style='background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:14px 16px; margin:10px 0;'>
-                    <div style='font-size:0.72rem; font-weight:700; letter-spacing:0.07em; text-transform:uppercase; color:#16a34a; margin-bottom:8px;'>
-                        📊 Overnight feedback — {drop_dates[i].strftime('%b %d')}
+                <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px 16px; margin:10px 0;'>
+                    <div style='font-size:0.72rem; font-weight:700; letter-spacing:0.07em; text-transform:uppercase; color:#64748b; margin-bottom:8px;'>
+                        💬 Audience comments — {drop_dates[i].strftime('%b %d')}
                     </div>
-                    <div style='display:flex; gap:24px; font-size:0.85rem; color:#374151; margin-bottom:8px;'>
-                        <span>📈 <strong>{feedback['ctr']}%</strong> CTR</span>
-                        <span>❤️ <strong>{feedback['engagement_rate']}%</strong> engagement</span>
-                        <span>👁 <strong>{feedback['views']:,}</strong> views</span>
-                    </div>
-                    <div style='font-size:0.8rem; color:#6b7280; font-style:italic; margin-bottom:6px;'>
-                        {' · '.join(f'"{c}"' for c in feedback["comments"][:2])}
-                    </div>
-                    <div style='font-size:0.8rem; color:#d97706; font-weight:600;'>
-                        ⚡ Insight fed into next brief: {feedback["insight"]}
+                    {comment_html}
+                    <div style='font-size:0.78rem; color:#94a3b8; margin-top:8px;'>
+                        Carried into the next brief alongside this campaign's approved copy. Brand facts are re-retrieved from source.
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-            campaign_history.append({
-                "tagline": strategy.tagline,
-                "key_messages": strategy.key_messages,
-                "feedback": feedback,
-            })
+            if approved:
+                campaign_history.append({
+                    "tagline": strategy.tagline,
+                    "campaign_concept": strategy.campaign_concept,
+                    "key_messages": strategy.key_messages,
+                    "comments": comments,
+                })
+            else:
+                st.markdown(
+                    "<div style='font-size:0.8rem; color:#7c3aed; margin:4px 0 10px 0;'>"
+                    "This cycle produced nothing publishable, so nothing from it is carried into the next brief."
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
             series_progress.progress((i + 1) / num_campaigns)
-
-            if creative.status == "HALTED":
-                series_status.error(f"🛑 Series halted at campaign {i+1} — no further content generated.")
-                break
 
         series_status.empty()
 
@@ -482,40 +569,48 @@ if run_btn and user_prompt.strip():
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("""
         <div style='font-size:0.85rem; font-weight:600; color:#94a3b8; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;'>
-            Trust Score vs CTR Performance
+            Grounding record — every cycle
         </div>
-        <div style='font-size:0.8rem; color:#d97706; margin-bottom:8px;'>
-            ⚠️ Performance rising while trust falls — the invisible drift no one sees without cross-run monitoring
+        <div style='font-size:0.8rem; color:#64748b; margin-bottom:8px;'>
+            What was flagged, which layer caught it, and whether the one allowed rewrite fixed it.
         </div>
         """, unsafe_allow_html=True)
 
-        labels = [f"#{c['n']} {c['drop_date'].strftime('%b %d')}" for c in completed]
-        trust_scores = [c["research"].grounding_score for c in completed]
-        ctr_scores   = [c["feedback"]["ctr"] / 10.0 if c.get("feedback") else None for c in completed]
-
-        chart_data = {"Trust Score": trust_scores}
-        if any(v is not None for v in ctr_scores):
-            chart_data["CTR (normalized)"] = [v if v is not None else 0 for v in ctr_scores]
-
-        chart_df = pd.DataFrame(chart_data, index=labels)
-        st.line_chart(chart_df, use_container_width=True, height=180)
+        record_rows = []
+        for c in completed:
+            cr = c["creative"]
+            if not cr.flagged_claim:
+                outcome = "clean — passed first check"
+            elif cr.rewrite_fixed:
+                outcome = "rewrite fixed it"
+            elif cr.rewrite_attempted:
+                outcome = "rewrite failed — halted"
+            else:
+                outcome = "halted, no rewrite"
+            record_rows.append({
+                "Cycle": c["n"],
+                "Published": "no" if cr.status == "HALTED" else "yes",
+                "Flagged": (cr.flagged_claim or "—").replace("\n", " ")[:70],
+                "Caught by": cr.check_layer or "—",
+                "Type": cr.failure_type or "—",
+                "Attempts": len(cr.grounding_events) or 1,
+                "Outcome": outcome,
+                "Grounding": f"{c['research'].grounding_score:.2f}",
+            })
+        st.dataframe(pd.DataFrame(record_rows), use_container_width=True, hide_index=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
         for c in completed:
             halted = c["creative"].status == "HALTED"
             score = c["research"].grounding_score
             badge = trust_badge_html(score, halted)
-            drift_warning = ""
-            if c["n"] > 1 and score < completed[c["n"]-2]["research"].grounding_score - 0.10:
-                drift_warning = " &nbsp;<span style='color:#d97706; font-size:0.8rem;'>↓ drifting</span>"
-
             header_html = f"""
             <div style='display:flex; align-items:center; gap:12px; padding:10px 0 4px 0;'>
                 <div style='font-weight:700; font-size:1rem; color:{"#7c3aed" if halted else "#1a1a1a"};'>
                     {"🛑" if halted else f"#{c['n']}"} Campaign {c['n']}
                 </div>
                 <div style='font-size:0.8rem; color:#94a3b8;'>{c["drop_date"].strftime("%b %d, %Y")}</div>
-                {badge}{drift_warning}
+                {badge}
             </div>
             """
             st.markdown(header_html, unsafe_allow_html=True)
@@ -670,9 +765,38 @@ if run_btn and user_prompt.strip():
         </div>
         """, unsafe_allow_html=True)
 
+        render_grounding_record(creative)
+
         st.markdown("---")
         st.markdown("**Recommended next steps**")
-        if strategy.hallucination_detected:
+        halt_text = creative.halt_reason or ""
+        if "not supported by the brand documents" in halt_text:
+            actions = [
+                ("🛑 Do not publish", "A factual claim in this copy is not supported by the retrieved brand documents."),
+                ("🔍 Check the flagged claim", "The halt reason names it. Verify against the brand guide or sustainability report."),
+                ("👤 Route to brand reviewer", "A human decides whether the claim is defensible or the copy needs rewriting."),
+                ("📋 Create audit record", "Log span_id, failure_type=UNSUPPORTED_CLAIM, action=HALTED — required for EU AI Act Article 13."),
+            ]
+        elif "not in Verdant's approved statistics" in halt_text:
+            actions = [
+                ("🛑 Do not publish", "Cites a statistic outside the approved set."),
+                ("🔢 Verify or remove the figure", "Approved statistics live in the brand guide. If the number is real, get it added there."),
+                ("👤 Route to brand reviewer", "Thirty seconds of review, versus a published figure Verdant cannot substantiate."),
+                ("📋 Create audit record", "Log span_id, failure_type=UNAPPROVED_STAT, action=HALTED."),
+            ]
+        elif "names the competitor" in halt_text:
+            actions = [
+                ("🛑 Do not publish", "Brand guide prohibits direct comparison to competitors by name."),
+                ("✏️ Rewrite without the name", "Make the point on Verdant's own evidence."),
+                ("📋 Create audit record", "Log span_id, failure_type=COMPETITOR_NAMED, action=HALTED."),
+            ]
+        elif "could not run" in halt_text:
+            actions = [
+                ("⏸️ Held, not cleared", "The grounding judge was unavailable, so this copy was never verified."),
+                ("🔧 Check judge availability", "Confirm phoenix[evals] is installed and OPENAI_API_KEY is valid, then re-run."),
+                ("👤 Human review required", "Do not publish on the assumption that unverified means clean."),
+            ]
+        elif strategy.hallucination_detected or "prohibited claim" in halt_text:
             actions = [
                 ("🛑 Do not publish", "Contains prohibited claims — do not deliver to any downstream system."),
                 ("👤 Escalate to brand safety team", "Flag for manual review within 1 business hour."),
@@ -690,6 +814,7 @@ if run_btn and user_prompt.strip():
             st.markdown(f"**{action}** — {detail}")
 
     elif num_campaigns == 1:
+        render_grounding_record(creative)
         st.markdown(f"<div class='tagline-output'>\"{strategy.tagline}\"</div>", unsafe_allow_html=True)
 
         col_meta1, col_meta2 = st.columns(2)

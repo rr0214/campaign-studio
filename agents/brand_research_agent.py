@@ -41,6 +41,18 @@ class ResearchResult:
 # Vector store setup
 # ---------------------------------------------------------------------------
 
+# Single source of truth for the retrieval-quality cutoff. This file previously
+# labelled anything above 0.6 "high" while Agent 3's gate halted below 0.70 —
+# so a 0.65 retrieval was reported as high quality and then halted. Agents 2 and 3
+# import this constant rather than repeating a literal.
+RETRIEVAL_QUALITY_THRESHOLD = 0.70
+
+# Model used by all three agents. The gpt-5.6 family does not accept a custom
+# `temperature` (only the default), and takes `max_completion_tokens` rather than
+# `max_tokens`, with reasoning tokens counted against that budget — so the caps
+# below are set well above the visible output length they need to produce.
+AGENT_MODEL = "gpt-5.6-luna"
+
 BRAND_DOCS_DIR = Path(__file__).parent.parent / "data" / "brand_docs"
 
 _chroma_client = None
@@ -161,19 +173,22 @@ def run_brand_research(
     include_poisoned: bool = False,
     simulate_low_confidence: bool = False,
     n_results: int = 4,
-    campaign_history: list = None,   # Prior campaign outputs — used to extract audience signals
-    series_position: int = 1,        # Position in series — applies progressive drift penalty
+    series_position: int = 1,        # Position in series — recorded on the span, nothing more
 ) -> ResearchResult:
     """
     Run the Brand Research Agent.
+
+    Brand facts are retrieved fresh on every call. Nothing from a prior cycle —
+    not retrieved chunks, not prior campaign copy, not audience comments — is
+    carried into retrieval. Each cycle asks the documents the same question and
+    gets whatever the documents currently say.
 
     Args:
         query:                   The research question
         include_poisoned:        If True, loads the injection doc into the vector store
         simulate_low_confidence: If True, forces low-quality retrieval to demo trust propagation failure
         n_results:               Number of chunks to retrieve from vector store
-        campaign_history:        Prior campaigns — audience feedback signals used to focus the query
-        series_position:         Position in series — used for drift penalty calculation
+        series_position:         Position in series — recorded as a span attribute only
 
     Returns:
         ResearchResult with answer, sources, and grounding_score
@@ -184,46 +199,23 @@ def run_brand_research(
     # Use fewer results to simulate weak retrieval
     effective_n = 1 if simulate_low_confidence else n_results
 
-    # ── Query evolution: driven by audience feedback signals, not taglines ──
-    # If prior campaigns had high CTR, audience comments are injected into the
-    # research query to focus retrieval on what resonated. This is legitimate
-    # personalization — but audience comments often contain unverified assumptions
-    # ("carbon neutral", "B Corp") that pull retrieval toward weaker chunks.
-    evolved_query = query
-    if campaign_history:
-        high_ctr_signals = []
-        for h in campaign_history:
-            fb = h.get("feedback")
-            if fb and fb.get("ctr", 0) > 3.5:  # High CTR threshold
-                comments = fb.get("comments", [])
-                high_ctr_signals.extend(comments[:2])
-
-        if high_ctr_signals:
-            audience_context = " ".join(high_ctr_signals)
-            evolved_query = (
-                f"{query}. "
-                f"Audiences have been responding strongly to these themes: {audience_context}. "
-                f"Find brand evidence that supports what the audience cares about."
-            )
-
     with tracer.start_as_current_span("brand-research-agent") as span:
         span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "AGENT")
-        span.set_attribute(SpanAttributes.INPUT_VALUE, evolved_query)
+        span.set_attribute(SpanAttributes.INPUT_VALUE, query)
         span.set_attribute("agent.name", "BrandResearchAgent")
         span.set_attribute("agent.version", "1.0")
         span.set_attribute("agent.mode.poisoned", include_poisoned)
         span.set_attribute("series.position", series_position)
-        span.set_attribute("series.query_evolved", bool(campaign_history))
         span.set_attribute("agent.mode.low_confidence", simulate_low_confidence)
 
         # ── Step 1: Retrieve relevant chunks ──────────────────────────────
         with tracer.start_as_current_span("vector-retrieval") as retrieval_span:
             retrieval_span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "RETRIEVER")
-            retrieval_span.set_attribute(SpanAttributes.INPUT_VALUE, evolved_query)
+            retrieval_span.set_attribute(SpanAttributes.INPUT_VALUE, query)
 
             collection = _get_collection(include_poisoned=include_poisoned)
             results = collection.query(
-                query_texts=[evolved_query],
+                query_texts=[query],
                 n_results=min(effective_n, collection.count()),
                 include=["documents", "metadatas", "distances"],
             )
@@ -271,16 +263,15 @@ Provide a focused research summary that a campaign strategist can use directly."
         with tracer.start_as_current_span("llm-synthesis") as llm_span:
             llm_span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "LLM")
             llm_span.set_attribute(SpanAttributes.INPUT_VALUE, user_message)
-            llm_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, "gpt-4o-mini")
+            llm_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, AGENT_MODEL)
 
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=AGENT_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                temperature=0.2,
-                max_tokens=600,
+                max_completion_tokens=3000,
             )
             answer = response.choices[0].message.content
 
@@ -293,17 +284,10 @@ Provide a focused research summary that a campaign strategist can use directly."
         # ── Step 3: Calculate grounding score ─────────────────────────────
         grounding_score = _calculate_grounding_score(answer, retrieved_chunks, n_results)
 
-        # Series drift penalty: audience feedback pulls the query toward unverified
-        # themes each cycle. Retrieval quality degrades as the query drifts from
-        # brand doc language toward audience-projected claims.
-        if series_position > 1:
-            drift_penalty = sum(0.06 + (k * 0.01) for k in range(series_position - 1))
-            grounding_score = round(max(0.10, grounding_score - drift_penalty), 3)
-
         span.set_attribute(SpanAttributes.OUTPUT_VALUE, answer)
         span.set_attribute("trust.grounding_score", grounding_score)
         span.set_attribute("trust.n_chunks_retrieved", len(retrieved_chunks))
-        span.set_attribute("trust.retrieval_quality", "low" if grounding_score < 0.6 else "high")
+        span.set_attribute("trust.retrieval_quality", "low" if grounding_score < RETRIEVAL_QUALITY_THRESHOLD else "high")
         span.set_attribute("trust.injection_risk", "high" if include_poisoned else "low")
         # Stamp retrieved content on the AGENT span so it's accessible in trace-level evals.
         # The same content is on the child RETRIEVER span via RETRIEVAL_DOCUMENTS, but
@@ -330,7 +314,7 @@ Provide a focused research summary that a campaign strategist can use directly."
                 "avg_relevance": round(
                     sum(c["relevance_score"] for c in retrieved_chunks) / max(len(retrieved_chunks), 1), 3
                 ),
-                "retrieval_quality": "low" if grounding_score < 0.6 else "high",
+                "retrieval_quality": "low" if grounding_score < RETRIEVAL_QUALITY_THRESHOLD else "high",
                 "injection_risk": "high" if include_poisoned else "low",
                 "simulated_low_confidence": simulate_low_confidence,
             },
