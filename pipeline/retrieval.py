@@ -31,6 +31,17 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 # removed from the gate. VERIFY reads the text instead.
 RETRIEVAL_QUALITY_THRESHOLD = 0.70
 
+# How many chunks retrieval returns. Raised from 4 to 8 on 2026-09-20 after the
+# retrieval eval measured 70.0% mean fact recall at 4 — 9 of 20 briefs missing a
+# fact the brief needed, while all 20 scored "high" grounding. Single variable:
+# chunk size and the query template are unchanged.
+#
+# evals/eval_retrieval.py defaults to this constant so the eval always measures
+# the production configuration rather than drifting from it.
+DEFAULT_N_RESULTS = 8
+
+EXPANSION_MODEL = "gpt-5.6-luna"
+
 
 @dataclass
 class RetrievalResult:
@@ -143,11 +154,62 @@ def derive_research_query(brief: str) -> str:
     return f"What brand facts, certifications, and approved claims support this campaign: {brief}"
 
 
+# ---------------------------------------------------------------------------
+# EXPERIMENT B — query expansion (2026-09-20)
+# ---------------------------------------------------------------------------
+# NOT called by retrieve(). retrieve() stays model-free by design: it always runs,
+# always the same way, and nothing about it depends on a model's output. Expansion
+# is an opt-in step a caller performs BEFORE retrieving, so the property holds.
+
+QUERY_EXPANSION_PROMPT = """Turn this campaign brief into search terms for a document index.
+
+BRIEF: {brief}
+
+The index holds a brand guide, a product catalogue and a sustainability report for
+an activewear company. Return the words most likely to appear in the passages this
+brief needs — product names, material names, section headings, the kind of figures
+that would be quoted.
+
+Rules:
+- Terms only. No sentences, no explanation.
+- 8 to 15 comma-separated terms.
+- Include obvious synonyms and the specific nouns the brief only implies.
+  "Product feature campaign" should yield materials, fabric composition, shell,
+  insulation, jacket, leggings, specifications — not "product feature".
+
+Return only the comma-separated terms."""
+
+
+def expand_query(brief: str, client=None) -> tuple:
+    """
+    Expand a brief into retrieval terms with one cheap model call.
+    Returns (expanded_query, StepCost). Falls back to the brief on any failure —
+    a broken expansion must not stop retrieval.
+    """
+    from openai import OpenAI
+
+    from pipeline.pricing import cost_from_response, price_usage
+
+    client = client or OpenAI()
+    try:
+        response = client.chat.completions.create(
+            model=EXPANSION_MODEL,
+            messages=[{"role": "user",
+                       "content": QUERY_EXPANSION_PROMPT.format(brief=brief)}],
+            max_completion_tokens=800,
+        )
+        terms = (response.choices[0].message.content or "").strip()
+        cost = cost_from_response("query_expansion", EXPANSION_MODEL, response)
+        return (terms or brief), cost
+    except Exception:
+        return brief, price_usage("query_expansion", EXPANSION_MODEL, 0, 0, measured=False)
+
+
 def retrieve(
     query: str,
     include_poisoned: bool = False,
     simulate_low_confidence: bool = False,
-    n_results: int = 4,
+    n_results: int = DEFAULT_N_RESULTS,
 ) -> RetrievalResult:
     """Query the brand documents. No model call, no branching on model output."""
     effective_n = 1 if simulate_low_confidence else n_results

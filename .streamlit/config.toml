@@ -1,0 +1,13 @@
+# Pinned theme. The app does not follow the viewer's OS theme — a dark-mode
+# machine would otherwise render Streamlit's own chrome (input text, expander
+# headers, code blocks) in light-on-light against the light cards this app draws.
+[theme]
+base                     = "light"
+primaryColor             = "#0E3B2E"
+backgroundColor          = "#FAF7F2"
+secondaryBackgroundColor = "#F1EDE6"
+textColor                = "#0B0F0D"
+font                     = "sans serif"
+
+[server]
+headless = true

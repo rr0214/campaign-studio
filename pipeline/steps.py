@@ -21,6 +21,9 @@ from openai import OpenAI
 from brand_policy import check_brand_policy
 from evals.grounding_check import (
     LAYER_NONE,
+    SUBJECT_VIDEO,
+    judge_video_shot,
+    run_deterministic_checks,
     TracedSpans,
     find_contradicting_source,
     run_grounding_check,
@@ -756,7 +759,30 @@ FALLBACK_VIDEO_PROMPT = (
 )
 
 
-def build_video_prompt(draft: CampaignDraft, client: OpenAI = None) -> tuple[str, StepCost, list, str]:
+@dataclass
+class ShotPrompt:
+    """
+    The shot description plus everything the video guardrail decided about it.
+
+    `blocked` carries a GroundingCheckResult when a layer refused the shot; the
+    caller must not generate video in that case. Fail closed — an unchecked shot
+    is not a safe shot.
+    """
+    text: str
+    cost: StepCost
+    leaked: list = field(default_factory=list)
+    request: str = ""
+    blocked: object = None
+    judge_label: str = ""
+    judge_explanation: str = ""
+
+    @property
+    def safe(self) -> bool:
+        return self.blocked is None
+
+
+def build_video_prompt(draft: CampaignDraft, client: OpenAI = None,
+                       sources=None, judge_model=None) -> ShotPrompt:
     """
     Turn the campaign into a shot description containing only things a camera can
     photograph. Returns (prompt, cost, banned_terms_that_survived).
@@ -856,12 +882,62 @@ Return only the shot description."""
         if banned2:
             # Still leaking a concept word. Ship a prompt that is known clean and
             # has its own turn, rather than one that renders the idea literally.
-            return FALLBACK_VIDEO_PROMPT, cost, banned2, sent
+            return _guard_shot(FALLBACK_VIDEO_PROMPT, cost, banned2, sent,
+                               sources, judge_model)
         # A missing turn is a weaker shot, not an unsafe one — keep it and record it
         # rather than discarding a clean prompt for the generic fallback.
-        return text2, cost, [], sent
+        return _guard_shot(text2, cost, [], sent, sources, judge_model)
 
-    return text, cost, [], sent
+    return _guard_shot(text, cost, [], sent, sources, judge_model)
+
+
+def _guard_shot(text, cost, leaked, sent, sources, judge_model) -> ShotPrompt:
+    """
+    The video guardrail, in two layers, mirroring the copy guardrail.
+
+      LAYER 1 — the same deterministic checks the copy goes through, run on the
+                shot description. Free, no model call.
+      LAYER 2 — the visual-claim judge, only on shots layer 1 passed.
+
+    Both fail closed: a trip, or a judge that cannot run, blocks generation.
+    """
+    shot = ShotPrompt(text=text, cost=cost, leaked=list(leaked), request=sent)
+
+    deterministic = run_deterministic_checks(text, subject=SUBJECT_VIDEO)
+    if deterministic is not None:
+        shot.blocked = deterministic
+        return shot
+
+    if sources is None:
+        # Nothing to judge against. Layer 1 passed, so the shot ships — the judge
+        # is skipped rather than failed, because no sources were supplied at all.
+        return shot
+
+    try:
+        label, explanation = judge_video_shot(text, sources, model=judge_model)
+    except Exception as exc:
+        from evals.grounding_check import GroundingCheckResult, JUDGE_UNAVAILABLE, LAYER_JUDGE
+        shot.blocked = GroundingCheckResult(
+            passed=False, layer=LAYER_JUDGE, failure_type=JUDGE_UNAVAILABLE,
+            claim_flagged="",
+            reason=(f"Video blocked: the visual-claim judge could not run "
+                    f"({type(exc).__name__}: {exc}). The shot was never checked, so "
+                    f"it is held rather than filmed."),
+            judge_called=True,
+        )
+        return shot
+
+    shot.judge_label, shot.judge_explanation = label, explanation
+    if label == "unsupported":
+        from evals.grounding_check import GroundingCheckResult, UNSUPPORTED_CLAIM, LAYER_JUDGE
+        shot.blocked = GroundingCheckResult(
+            passed=False, layer=LAYER_JUDGE, failure_type=UNSUPPORTED_CLAIM,
+            claim_flagged=explanation.strip(),
+            reason=("Video blocked: a viewer would conclude something the brand "
+                    f"documents do not support. Judge: {explanation.strip()}"),
+            judge_called=True, judge_label=label, judge_explanation=explanation,
+        )
+    return shot
 
 
 def generate_video(video_prompt: str) -> AssetResult:

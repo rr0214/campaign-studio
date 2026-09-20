@@ -65,9 +65,22 @@ class StepCost:
         return "free" if self.usd == 0 else "known"
 
     def display_usd(self) -> str:
-        return {"unknown": "unknown", "free": "$0.00000"}.get(
-            self.cost_state, f"${self.usd:.6f}" if self.usd is not None else "unknown"
-        )
+        """
+        Render the cost without collapsing the three states.
+
+        A real sub-microdollar cost (a cached-collection embedding call runs about
+        $0.0000004) formatted at six decimal places came out as "$0.000000" —
+        indistinguishable from a step that genuinely cost nothing. The data model
+        kept known/free/unknown apart; the formatting threw it away again.
+        """
+        state = self.cost_state
+        if state == "unknown":
+            return "unknown"
+        if state == "free":
+            return "free"
+        if self.usd < 0.000001:
+            return "<$0.000001"
+        return f"${self.usd:.6f}"
 
 
 def price_usage(

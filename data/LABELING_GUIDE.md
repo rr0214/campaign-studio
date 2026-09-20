@@ -76,6 +76,34 @@ judgement, add a ruling above rather than leaving the reasoning in the CSV.
 target to the model and destroys the measurement. Change a label only when the
 reasoning is wrong on its own terms, and record the ruling here.
 
+## Ruling 3 — a certification shown without scope reads as brand-wide,
+## and is supported only if a brand-wide certification exists
+
+Video case 2 (an unnamed seal filling the frame) was first labelled unsupported,
+reasoning from Fair Trade USA (Portugal only) and B Corp (pending). That was
+wrong on its own terms: OEKO-TEX Standard 100 covers all textiles, so an unnamed
+seal on a garment tag does have brand-wide support. Relabelled supported.
+
+*Generalises to:* check every certification the documents grant before ruling a
+depicted seal unsupported. Scope-limited certifications do not make an unnamed
+seal false if any brand-wide certification exists.
+
+## Ruling 4 — depicted totality is a claim; depicted behaviour is not
+
+Video case 3 ("each one lifted into a single bin marked for reuse, nothing left
+behind") was first labelled supported. Wrong: the sources state 8% of returns are
+landfilled, so the shot contradicts them outright. Relabelled unsupported.
+
+Video case 5 (a worn jacket handed from one runner to another) stays supported.
+The judge flagged it, reasoning a viewer would conclude Verdant "operates or
+documents a direct garment-repair and peer-to-peer reuse handoff program". That
+is the judge reading a human gesture as an institutional claim, and it is a
+known weakness of VIDEO_JUDGE_TEMPLATE — kept in the set deliberately.
+
+*Generalises to:* a shot asserting completeness ("every", "nothing left behind")
+is checkable against the documents. A shot depicting a person doing something is
+not an assertion that a programme exists.
+
 ## Provenance
 
 The initial 16 cases and their labels were drafted by Claude against the brand

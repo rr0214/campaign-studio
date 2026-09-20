@@ -77,6 +77,9 @@ class CampaignRun:
     repair_attempted: bool = False
     repair_fixed: bool = False
     audience_comments_generated: list = field(default_factory=list)
+    video_blocked: object = None   # GroundingCheckResult when the shot was refused
+    video_judge_label: str = ""    # visual-claim judge verdict, when it ran
+    video_concept_leaked: list = field(default_factory=list)  # forced the fallback shot
     corrected_claim: str = ""
 
     cost: CostMeter = field(default_factory=CostMeter)
@@ -89,10 +92,20 @@ class CampaignRun:
     # ── Accessors the UI and evals read ──────────────────────────────────────
     @property
     def final_status(self) -> str:
+        if self.video_blocked is not None:
+            return "FLAGGED"
         return self.routing.final_status if self.routing else "ERROR"
 
     @property
     def published(self) -> bool:
+        """
+        One unit: a campaign is its copy AND its video. ROUTE settles before
+        ASSETS runs, so a refused shot arrives after routing has already said
+        publish — and it holds the whole campaign, exactly as a failed copy check
+        does. Nothing ships in halves.
+        """
+        if self.video_blocked is not None:
+            return False
         return bool(self.routing and self.routing.publishes)
 
     @property
@@ -105,13 +118,25 @@ class CampaignRun:
 
     @property
     def check_layer(self) -> str:
+        # A video block is the failure when the copy passed — reporting the copy
+        # verdict's layer would say "none" on a campaign that was held.
+        if self.video_blocked is not None and (
+                not self.first_verdict or self.first_verdict.passed):
+            return self.video_blocked.layer
         if not self.first_verdict:
             return LAYER_NONE_FALLBACK
         return self.first_verdict.layer if not self.first_verdict.passed else "none"
 
     @property
     def failure_type(self) -> Optional[str]:
-        return (self.first_verdict.failure_type or None) if self.first_verdict else None
+        copy_failure = (self.first_verdict.failure_type or None) if self.first_verdict else None
+        if copy_failure:
+            return copy_failure
+        # The audit record showed failure_type None beside status FLAGGED because
+        # only the copy verdict was consulted.
+        if self.video_blocked is not None:
+            return self.video_blocked.failure_type
+        return None
 
     def correction_record(self) -> Optional[dict]:
         """
@@ -131,6 +156,8 @@ class CampaignRun:
 
     @property
     def halt_reason(self) -> Optional[str]:
+        if self.video_blocked is not None:
+            return self.video_blocked.reason
         if self.routing and self.routing.publishes:
             return None
         base = self.verdict.reason if self.verdict else None
@@ -373,10 +400,11 @@ def run_campaign_pipeline(
             with tracer.start_as_current_span("assets") as span:
                 span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, TOOL_KIND)
                 span.set_attribute("tool.name", "veo-3.1-lite-generate-preview")
-                video_prompt, prompt_cost, leaked, shot_request = S.build_video_prompt(
-                    run.draft, client=client
+                shot = S.build_video_prompt(
+                    run.draft, client=client, sources=run.retrieval.sources_text
                 )
-                run.cost.add(prompt_cost)
+                video_prompt, leaked, shot_request = shot.text, shot.leaked, shot.request
+                run.cost.add(shot.cost)
                 run.prompts.append({"step": "assets (shot brief)",
                                     "model": S.GENERATE_MODEL, "text": shot_request})
                 run.prompts.append({"step": "assets (sent to Veo)",
@@ -386,8 +414,23 @@ def run_campaign_pipeline(
                 # forced the fallback shot. A video model renders them literally.
                 span.set_attribute("video.concept_terms_leaked", ",".join(leaked))
                 span.set_attribute("video.used_fallback_prompt", bool(leaked))
+                run.video_concept_leaked = list(leaked)
                 span.set_attribute("video.has_turn", S.has_turn(video_prompt))
-                run.assets = S.generate_video(video_prompt)
+                # The video guardrail decides before a frame is generated.
+                span.set_attribute("video.guardrail_layer",
+                                   (shot.blocked.layer if shot.blocked else "none"))
+                span.set_attribute("video.judge_verdict", shot.judge_label or "not_called")
+                run.video_judge_label = shot.judge_label
+                if shot.blocked is not None:
+                    span.set_attribute("video.blocked", True)
+                    span.set_attribute("video.block_type", shot.blocked.failure_type or "")
+                    span.set_attribute("video.block_reason", shot.blocked.reason)
+                    run.assets = S.AssetResult(video_prompt=video_prompt,
+                                               error=shot.blocked.reason)
+                    run.video_blocked = shot.blocked
+                else:
+                    span.set_attribute("video.blocked", False)
+                    run.assets = S.generate_video(video_prompt)
                 span.set_attribute(SpanAttributes.INPUT_VALUE, video_prompt)
                 span.set_attribute(
                     "tool.status", "error" if run.assets.error else "success"
@@ -398,7 +441,7 @@ def run_campaign_pipeline(
                     SpanAttributes.OUTPUT_VALUE,
                     run.assets.video_url or ("video_bytes" if run.assets.video_bytes else "none"),
                 )
-                _set_step_cost(span, prompt_cost)
+                _set_step_cost(span, shot.cost)
             _notify(progress, "assets", "done", {"error": run.assets.error, "has_video": bool(run.assets.video_bytes or run.assets.video_url)})
 
         # ── AUDIENCE ─────────────────────────────────────────────────────────
@@ -422,7 +465,14 @@ def run_campaign_pipeline(
             _notify(progress, "audience", "done", {"n": len(comments)})
 
         # ── Root attributes ──────────────────────────────────────────────────
-        root.set_attribute("trust.final_status", run.routing.final_status)
+        # The routing decision is made before ASSETS runs, so a blocked video is
+        # not reflected in it. Surfaced separately rather than rewriting the
+        # routing outcome — the copy genuinely did publish.
+        root.set_attribute("trust.final_status", run.final_status)
+        root.set_attribute("route.decision_before_assets", run.routing.final_status)
+        root.set_attribute("trust.video_blocked", run.video_blocked is not None)
+        root.set_attribute("trust.needs_human_review",
+                           (not run.published) or run.routing.sampled)
         root.set_attribute("trust.check_layer", run.check_layer)
         root.set_attribute("trust.failure_type", run.failure_type or "")
         root.set_attribute("trust.claim_flagged", run.flagged_claim or "")
@@ -436,7 +486,7 @@ def run_campaign_pipeline(
         root.set_attribute("trust.rewrite_attempted", run.repair_attempted)
         root.set_attribute("trust.rewrite_fixed", run.repair_fixed)
         root.set_attribute("trust.attempts", len(run.verify_events))
-        root.set_attribute("trust.pipeline_halted", not run.routing.publishes)
+        root.set_attribute("trust.pipeline_halted", not run.published)
         root.set_attribute("trust.halt_reason", run.failure_type or "")
         root.set_attribute("trust.grounding_score_inherited", run.retrieval.grounding_score)
         root.set_attribute(
