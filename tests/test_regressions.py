@@ -134,6 +134,54 @@ no_price = price_usage("x", "some-model-we-have-no-rate-for", 1000, 100)
 check("unknown model priced as unknown", no_price.usd is None, repr(no_price.usd))
 
 
+# ---------------------------------------------------------------------------
+print("\n=== 3. a failed judge call costs 'unknown', and the eval mean skips it ===")
+# ---------------------------------------------------------------------------
+# Fail-closed already covers the verdict; this covers the accounting. A judge that
+# errored still consumed no measurable usage, so its cost must be unknown — and an
+# unknown must not be averaged in as zero, which would quietly drag the mean down.
+from unittest import mock
+
+import pandas as pd
+
+import evals.grounding_check as gc
+import pipeline.steps as S
+
+_draft = S.CampaignDraft(tagline="T", campaign_concept="87% certified.", caption="c")
+_retrieval = type("R", (), {"sources_text": "87% of materials by weight are certified sustainable"})()
+
+with mock.patch.object(gc, "run_judge", side_effect=RuntimeError("judge exploded")):
+    verdict = S.verify(_draft, _retrieval)
+
+check("failed judge fails closed", not verdict.passed, str(verdict.failure_type))
+check("failed judge cost is unknown", verdict.cost.cost_state == "unknown",
+      f"{verdict.cost.cost_state} / usd={verdict.cost.usd!r}")
+check("failed judge is not priced as free", verdict.cost.usd is None, repr(verdict.cost.usd))
+
+_known = price_usage("generate", "gpt-5.6-luna", 1000, 200)
+_meter = CostMeter(); _meter.add(verdict.cost); _meter.add(_known)
+check("run total withheld after a judge failure", _meter.total_usd is None,
+      repr(_meter.total_usd))
+
+# Call the eval's own aggregation rather than replicating it — a replica would
+# keep passing after the real one changed.
+from evals.eval_end_to_end import summarise_costs
+
+_frame = pd.DataFrame({"usd": [_meter.total_usd, 0.004, 0.006]})
+_costs = summarise_costs(_frame)
+check("eval counts the unknown run", _costs["n_unknown"] == 1, str(_costs))
+check("eval prices only the measured runs", _costs["n_priced"] == 2, str(_costs))
+check("eval mean excludes the unknown", abs(_costs["mean_usd"] - 0.005) < 1e-9,
+      f"mean={_costs['mean_usd']} (0.0033 would mean it counted unknown as zero)")
+check("eval total excludes the unknown", abs(_costs["total_usd"] - 0.010) < 1e-9,
+      f"total={_costs['total_usd']}")
+
+# All-unknown must not report $0.00 across the board.
+_all_unknown = summarise_costs(pd.DataFrame({"usd": [None, None]}))
+check("all-unknown reports no total", _all_unknown["total_usd"] is None, str(_all_unknown))
+check("all-unknown reports no mean", _all_unknown["mean_usd"] is None, str(_all_unknown))
+
+
 print("\n" + "=" * 60)
 if FAILS:
     print(f"{len(FAILS)} FAILED: {FAILS}")

@@ -37,6 +37,30 @@ def _split_prohibited(raw: str) -> list:
             and not p.strip().startswith("(")]
 
 
+def summarise_costs(frame) -> dict:
+    """
+    Aggregate run costs across an eval frame.
+
+    Unknown runs are excluded from both the total and the mean rather than
+    counted as zero. Averaging an unmeasured run as free reports a cheaper
+    system than we actually have, which is the same class of error as pricing
+    an uncaptured call at $0.00 (see tests/test_regressions.py, defect 2).
+
+    Extracted so the aggregation can be tested directly instead of replicated
+    in the test — a replica drifts silently the moment this changes.
+    """
+    if "usd" not in frame:
+        return {"n_priced": 0, "n_unknown": 0, "total_usd": None, "mean_usd": None}
+    usd = frame["usd"]
+    priced = usd.dropna()
+    return {
+        "n_priced": int(len(priced)),
+        "n_unknown": int(usd.isna().sum()),
+        "total_usd": float(priced.sum()) if len(priced) else None,
+        "mean_usd": float(priced.mean()) if len(priced) else None,
+    }
+
+
 def run_end_to_end(sample_size: int = 20, generate_assets: bool = False):
     print(f"\n{'='*70}")
     print("END-TO-END EVAL — does the pipeline publish anything it shouldn't?")
@@ -109,7 +133,7 @@ def run_end_to_end(sample_size: int = 20, generate_assets: bool = False):
     n_escapes = int(clean["escaped"].sum())
     repaired = int(clean["repair_attempted"].sum())
     fixed = int(clean["repair_fixed"].sum())
-    priced = clean["usd"].dropna()
+    costs = summarise_costs(clean)
 
     print(f"\n{'='*70}")
     print("RESULTS")
@@ -121,15 +145,14 @@ def run_end_to_end(sample_size: int = 20, generate_assets: bool = False):
     print(f"  Claims with no source: {int(clean['receipts_without_source'].sum())}")
     print(f"\n  ESCAPES:               {n_escapes}/{n}", end="")
     print("  ← published with a prohibited claim" if n_escapes else "  ✅ nothing bad published")
-    n_unknown = int(clean["usd"].isna().sum()) if "usd" in clean else 0
-    if len(priced):
-        print(f"\n  Cost: ${priced.sum():.4f} across {len(priced)} priced runs · "
-              f"${priced.mean():.5f} mean")
-        if n_unknown:
-            print(f"        {n_unknown} run(s) UNKNOWN — usage not captured, excluded "
-                  f"from the total rather than counted as zero")
-    elif n_unknown:
-        print(f"\n  Cost: UNKNOWN for all {n_unknown} run(s) — usage could not be captured")
+    if costs["n_priced"]:
+        print(f"\n  Cost: ${costs['total_usd']:.4f} across {costs['n_priced']} priced runs · "
+              f"${costs['mean_usd']:.5f} mean")
+        if costs["n_unknown"]:
+            print(f"        {costs['n_unknown']} run(s) UNKNOWN — usage not captured, "
+                  f"excluded from the total rather than counted as zero")
+    elif costs["n_unknown"]:
+        print(f"\n  Cost: UNKNOWN for all {costs['n_unknown']} run(s) — usage not captured")
     if n:
         print(f"  Time: {clean['seconds'].sum():.0f}s total · {clean['seconds'].mean():.0f}s mean")
 
