@@ -3,18 +3,21 @@ Agent 3: Creative Execution Agent
 ===================================
 Takes the approved campaign strategy from Agent 2 and produces a complete
 social media creative package:
-  - A 5-second Veo 2 campaign video (Google Gen AI)
+  - A 5-second Veo 3.1 Lite campaign video (Google Gen AI)
   - Social media caption + hashtags (GPT-4o-mini)
 
-TRUST GATE: If upstream trust signals indicate hallucination or critically low
-grounding, the pipeline halts before any creative assets are generated.
-This is the "take action" principle — not just flagging bad output, but
-refusing to produce creative assets from unverified brand claims.
+TRUST GATE: the campaign text is checked against the brand documents Agent 1
+retrieved, before any creative assets are generated. Cheap checks run first:
+prohibited phrases, unapproved statistics and competitor names are caught in
+plain Python; only text that survives those reaches the LLM judge. This is the
+"take action" principle — not just flagging bad output, but refusing to produce
+creative assets from unverified brand claims.
 
 Arize AX trace structure:
   creative-execution-agent (AGENT)
+    ├── claim-grounding-check (CHAIN)  — deterministic checks, then LLM judge
     ├── prompt-engineering (LLM)       — builds brand-safe video prompt
-    ├── veo-video-generation (TOOL)    — generates 5s social video via Veo 2
+    ├── veo-video-generation (TOOL)    — generates 5s social video via Veo 3.1 Lite
     └── caption-generation (LLM)      — writes social caption + hashtags
 """
 
@@ -29,10 +32,21 @@ from openai import OpenAI
 from opentelemetry import trace
 from openinference.semconv.trace import SpanAttributes
 
+from agents.brand_research_agent import RETRIEVAL_QUALITY_THRESHOLD, AGENT_MODEL
 from agents.campaign_strategy_agent import CampaignStrategy
+from agents.campaign_strategy_agent import revise_campaign_copy
+from evals.grounding_check import (
+    LAYER_NONE,
+    campaign_text_for_check,
+    find_contradicting_source,
+    run_grounding_check,
+)
 
-# Trust threshold — below this, pipeline halts, no creative generated
-CRITICAL_TRUST_THRESHOLD = 0.70
+# Retrieval-quality cutoff, shared with Agents 1 and 2. This is now a REPORTING
+# signal only. It no longer gates: the score is built from retrieval metrics and
+# never saw the generated text, so a perfect retrieval plus a fabricating model
+# scored high and sailed through. The gate below reads the text instead.
+CRITICAL_TRUST_THRESHOLD = RETRIEVAL_QUALITY_THRESHOLD
 
 # Verdant brand visual guidelines
 VERDANT_VISUAL_GUIDELINES = """
@@ -62,6 +76,21 @@ class CreativeResult:
     trust_score_inherited: float
     span_id: Optional[str] = None
 
+    # ── Grounding gate record ────────────────────────────────────────────────
+    # What the check saw, what it flagged, and whether the one allowed rewrite
+    # fixed it. Populated on every run, halted or not, so a series can be read
+    # cycle by cycle without re-deriving anything from the halt_reason string.
+    original_draft: Optional[str] = None      # copy as Agent 2 first wrote it
+    revised_draft: Optional[str] = None       # copy after the single rewrite, if one ran
+    flagged_claim: Optional[str] = None       # the claim that tripped the first check
+    source_line: Optional[str] = None         # the retrieved line it ran into
+    corrected_claim: Optional[str] = None     # how the rewrite reworded it
+    check_layer: Optional[str] = None         # deterministic | judge | none
+    failure_type: Optional[str] = None        # PROHIBITED_PHRASE | UNAPPROVED_STAT | ...
+    rewrite_attempted: bool = False
+    rewrite_fixed: bool = False
+    grounding_events: list = field(default_factory=list)  # one entry per attempt
+
 
 def run_creative_execution(
     strategy: CampaignStrategy,
@@ -79,35 +108,139 @@ def run_creative_execution(
         span.set_attribute("agent.upstream_span_id", strategy.span_id or "unknown")
         span.set_attribute("trust.grounding_score_inherited", strategy.trust_score_inherited)
         span.set_attribute("trust.hallucination_detected_upstream", strategy.hallucination_detected)
+        # Reported, not gating — kept so weak retrieval stays visible in Arize
+        # alongside whatever the grounding check decided about the text itself.
+        span.set_attribute(
+            "trust.retrieval_below_threshold",
+            strategy.trust_score_inherited < CRITICAL_TRUST_THRESHOLD,
+        )
 
-        # ── TRUST GATE ────────────────────────────────────────────────────────
-        if strategy.hallucination_detected:
-            halt_reason = (
-                "Pipeline halted: prohibited brand claims detected in campaign strategy. "
-                "No creative assets will be generated from unverified content. "
-                "This prevents brand misrepresentation and potential legal liability."
-            )
-            span.set_attribute("trust.pipeline_halted", True)
-            span.set_attribute("trust.halt_reason", "hallucination_detected")
-            return _halted_result(strategy, halt_reason, span)
+        # ── TRUST GATE: claim grounding, with one revision allowed ────────────
+        # Attempt 1 checks what Agent 2 wrote. If it fails, the copy is rewritten
+        # once against the source line the claim ran into, and re-checked once.
+        # Two attempts, hard cap, no loop: a model that cannot fix its own claim
+        # in one try is not going to find its way there in five, and each pass
+        # costs a judge call. Whatever the second check says is final.
+        MAX_ATTEMPTS = 2
 
-        if strategy.trust_score_inherited < CRITICAL_TRUST_THRESHOLD:
-            halt_reason = (
-                f"Pipeline halted: grounding score ({strategy.trust_score_inherited:.2f}) "
-                f"below critical threshold ({CRITICAL_TRUST_THRESHOLD}). "
-                "Campaign strategy lacks sufficient brand evidence. "
-                "Expand retrieval corpus before proceeding to creative execution."
+        grounding_events = []
+        original_draft = campaign_text_for_check(strategy)
+        revised_draft = None
+        corrected_claim = ""
+        first_failure = None
+
+        campaign_text = original_draft
+        check = None
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            with tracer.start_as_current_span("claim-grounding-check") as gate_span:
+                gate_span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "CHAIN")
+                gate_span.set_attribute(SpanAttributes.INPUT_VALUE, campaign_text)
+                gate_span.set_attribute("trust.attempt", attempt)
+
+                check = run_grounding_check(
+                    campaign_text,
+                    strategy.retrieved_facts,
+                    upstream_hallucination_flag=(
+                        strategy.hallucination_detected if attempt == 1 else False
+                    ),
+                )
+
+                source_line = (
+                    ""
+                    if check.passed
+                    else find_contradicting_source(
+                        check.claim_flagged, strategy.retrieved_facts, check.failure_type
+                    )
+                )
+
+                gate_span.set_attribute("trust.check_layer", check.layer)
+                gate_span.set_attribute("trust.failure_type", check.failure_type or "")
+                gate_span.set_attribute("trust.claim_flagged", check.claim_flagged or "")
+                gate_span.set_attribute("trust.judge_called", check.judge_called)
+                gate_span.set_attribute("trust.judge_label", check.judge_label or "")
+                gate_span.set_attribute("trust.source_line", source_line)
+                gate_span.set_attribute(
+                    SpanAttributes.OUTPUT_VALUE,
+                    "PASSED" if check.passed else f"HALTED — {check.failure_type}",
+                )
+
+            grounding_events.append({
+                "attempt": attempt,
+                "passed": check.passed,
+                "layer": check.layer if not check.passed else LAYER_NONE,
+                "failure_type": check.failure_type or "",
+                "claim_flagged": check.claim_flagged or "",
+                "source_line": source_line,
+                "judge_called": check.judge_called,
+                "draft": campaign_text,
+            })
+
+            if check.passed:
+                break
+
+            if attempt == MAX_ATTEMPTS:
+                break
+
+            # Only the first failure is worth reporting to the human — it is the
+            # claim the campaign actually started from.
+            first_failure = check
+            strategy, corrected_claim = revise_campaign_copy(
+                strategy=strategy,
+                flagged_claim=check.claim_flagged,
+                failure_reason=check.reason,
+                source_line=source_line,
+                sources_text=strategy.retrieved_facts,
             )
+            campaign_text = campaign_text_for_check(strategy)
+            revised_draft = campaign_text
+
+        rewrite_attempted = len(grounding_events) > 1
+        rewrite_fixed = rewrite_attempted and check.passed
+
+        # Mirror the final state onto the agent span so a cycle is one row in Arize.
+        span.set_attribute("trust.check_layer", check.layer if not check.passed else LAYER_NONE)
+        span.set_attribute("trust.failure_type", check.failure_type or "")
+        span.set_attribute("trust.claim_flagged", check.claim_flagged or "")
+        span.set_attribute("trust.judge_called", any(e["judge_called"] for e in grounding_events))
+        span.set_attribute("trust.attempts", len(grounding_events))
+        span.set_attribute("trust.rewrite_attempted", rewrite_attempted)
+        span.set_attribute("trust.rewrite_fixed", rewrite_fixed)
+        span.set_attribute(
+            "trust.first_failure_type",
+            grounding_events[0]["failure_type"] if grounding_events else "",
+        )
+
+        gate_detail = dict(
+            original_draft=original_draft,
+            revised_draft=revised_draft,
+            flagged_claim=grounding_events[0]["claim_flagged"] or None,
+            source_line=grounding_events[0]["source_line"] or None,
+            corrected_claim=corrected_claim or None,
+            check_layer=grounding_events[0]["layer"],
+            failure_type=grounding_events[0]["failure_type"] or None,
+            rewrite_attempted=rewrite_attempted,
+            rewrite_fixed=rewrite_fixed,
+            grounding_events=grounding_events,
+        )
+
+        if not check.passed:
             span.set_attribute("trust.pipeline_halted", True)
-            span.set_attribute("trust.halt_reason", "critical_low_grounding")
-            return _halted_result(strategy, halt_reason, span)
+            span.set_attribute("trust.halt_reason", check.failure_type or "unsupported_claim")
+            halt_reason = check.reason
+            if rewrite_attempted:
+                halt_reason = (
+                    f"{check.reason} A revision was attempted and re-checked; it did not clear "
+                    "the grounding check either. Both drafts are shown for review."
+                )
+            return _halted_result(strategy, halt_reason, span, **gate_detail)
 
         span.set_attribute("trust.pipeline_halted", False)
 
         # ── PHASE 1: Build brand-safe video prompt ────────────────────────────
         with tracer.start_as_current_span("prompt-engineering") as prompt_span:
             prompt_span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "LLM")
-            prompt_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, "gpt-4o-mini")
+            prompt_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, AGENT_MODEL)
 
             prompt_input = f"""You are a creative director for {brand_name}, a sustainable activewear brand.
 
@@ -130,10 +263,9 @@ Return only the video prompt, nothing else."""
             prompt_span.set_attribute(SpanAttributes.INPUT_VALUE, prompt_input)
 
             prompt_response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=AGENT_MODEL,
                 messages=[{"role": "user", "content": prompt_input}],
-                temperature=0.6,
-                max_tokens=200,
+                max_completion_tokens=2000,
             )
 
             video_prompt = prompt_response.choices[0].message.content.strip()
@@ -206,7 +338,7 @@ Return only the video prompt, nothing else."""
         # ── PHASE 3: Generate social caption ─────────────────────────────────
         with tracer.start_as_current_span("caption-generation") as caption_span:
             caption_span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "LLM")
-            caption_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, "gpt-4o-mini")
+            caption_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, AGENT_MODEL)
 
             caption_input = f"""Write a social media caption for this campaign.
 
@@ -227,10 +359,9 @@ Return caption then hashtags on separate line."""
             caption_span.set_attribute(SpanAttributes.INPUT_VALUE, caption_input)
 
             caption_response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=AGENT_MODEL,
                 messages=[{"role": "user", "content": caption_input}],
-                temperature=0.5,
-                max_tokens=200,
+                max_completion_tokens=2000,
             )
 
             caption_raw = caption_response.choices[0].message.content.strip()
@@ -267,10 +398,11 @@ Return caption then hashtags on separate line."""
             video_error=veo_error,
             trust_score_inherited=strategy.trust_score_inherited,
             span_id=_get_span_id(span),
+            **gate_detail,
         )
 
 
-def _halted_result(strategy, halt_reason, span) -> CreativeResult:
+def _halted_result(strategy, halt_reason, span, **gate_detail) -> CreativeResult:
     span.set_attribute(SpanAttributes.OUTPUT_VALUE, "PIPELINE_HALTED")
     return CreativeResult(
         status="HALTED",
@@ -285,6 +417,7 @@ def _halted_result(strategy, halt_reason, span) -> CreativeResult:
         video_error=None,
         trust_score_inherited=strategy.trust_score_inherited,
         span_id=_get_span_id(span),
+        **gate_detail,
     )
 
 

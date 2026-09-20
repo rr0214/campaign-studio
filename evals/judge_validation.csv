@@ -1,0 +1,108 @@
+id,brief,derived_query,query,campaign_text,sources,grounding_score,deterministic_failure_type,deterministic_claim_flagged,judge_label,judge_explanation,expected_hallucination,judge_says_unsupported,agrees_with_expected,notes
+1,Spring launch highlighting certifications,"What brand facts, certifications, and approved claims support this campaign: Spring launch highlighting certifications",What sustainability certifications does Verdant hold?,"Certified Materials. Clearer Moves. Spring Forward.
+We’re bringing certified material choices into the open, with performance designed for everyday movement. From certified recycled polyester to TENCEL™ lyocell, we share what goes into Verdant and keep the conversation moving forward together.
+87% of materials by weight are certified sustainable. We use certified recycled polyester from post-consumer plastic bottles. We use TENCEL™ lyocell from sustainably managed forests. Every Verdant garment comes with a full supply chain disclosure. 45,000+ garments have been recycled through the Take Back Program. Every item includes a 3-year product warranty.
+Move into spring with more clarity. 87% of our materials by weight are certified sustainable, and every Verdant garment comes with a full supply chain disclosure—so you can see what goes into the movement.
+#Verdant  #MaterialTransparency  #MoveWithVerdant  #SpringMovement","[Source: verdant_sustainability.txt]
+WHAT WE DO NOT CLAIM
+=====================
+Verdant does NOT claim:
+- Carbon neutrality (in progress)
+- 100% sustainable materials (we're at 87%)
+- Fair Trade for all manufacturing (Sri Lanka factory in process)
+- B Corp status (application pending)
+
+Any campaign copy making these claims is inaccurate and exposes Verdant to greenwashing liability.
+
+---
+
+[Source: verdant_brand_guide.txt]
+BRAND VOICE
+===========
+- Honest and direct — we don't greenwash or exaggerate our impact
+- Energetic but grounded — performance without pretense
+- Community-first — our customers are partners in our mission
+- Use ""we"" not ""I"" — Verdant is a collective
+
+CORE MESSAGING PILLARS
+======================
+1. MATERIALS TRANSPARENCY: Every Verdant garment comes with a full supply chain disclosure. We use certified recycled polyester from post-consumer plastic bottles and TENCEL™ lyocell from sustainably managed forests.
+
+---
+
+[Source: verdant_products.txt]
+BESTSELLERS & PERFORMANCE DATA
+================================
+- Trailbreaker Leggings: #1 product by revenue, 94% 5-star reviews
+- Customer return rate for sizing issues: 8% (industry avg is 23%)
+- Average product lifespan reported by customers: 3.2 years
+
+UPCOMING LAUNCHES (Q2 2026)
+============================
+- Cloudstep Running Shoe (first footwear category entry) — partnership with Vibram sole
+- Shoreline Swimwear collection — recycled ocean plastic
+NOTE: Do not reference upcoming products in public-facing campaigns without explicit approval from marketing leadership.
+
+---
+
+[Source: verdant_brand_guide.txt]
+APPROVED STATISTICS (as of Q1 2026)
+=====================================
+- 87% of materials by weight are certified sustainable
+- Take Back Program: 45,000+ garments recycled
+- 92% customer satisfaction in post-purchase surveys
+- Zero landfill in our Portugal factory since 2023
+- 3-year product warranty on all items",0.866,,,supported,"All verifiable factual claims in the campaign—including 87% certified sustainable materials by weight, certified recycled polyester from post-consumer bottles, TENCEL™ lyocell from sustainably managed forests, full supply-chain disclosures, 45,000+ recycled garments, and the 3-year warranty—are supported by the source documents.",False,False,True,B Corp is pending not certified
+2,Materials story for Gen Z audience,"What brand facts, certifications, and approved claims support this campaign: Materials story for Gen Z audience",What percentage of Verdant materials are certified sustainable?,"Know What Goes Into Your Gear
+Materials tell a story, and we’re making ours easier to see. We pair performance-minded design with direct information about what goes into Verdant gear—no mystery, no inflated promises.
+87% of our materials by weight are certified sustainable. We use certified recycled polyester from post-consumer plastic bottles. We use TENCEL™ lyocell from sustainably managed forests. Every Verdant garment comes with a full supply chain disclosure.
+What goes into our gear matters. We’re sharing the materials story directly: 87% of our materials by weight are certified sustainable, including certified recycled polyester from post-consumer plastic bottles and TENCEL™ lyocell from sustainably managed forests.
+#Verdant #MaterialsTransparency #PerformanceWithoutPretense #KnowYourGear","[Source: verdant_brand_guide.txt]
+BRAND VOICE
+===========
+- Honest and direct — we don't greenwash or exaggerate our impact
+- Energetic but grounded — performance without pretense
+- Community-first — our customers are partners in our mission
+- Use ""we"" not ""I"" — Verdant is a collective
+
+CORE MESSAGING PILLARS
+======================
+1. MATERIALS TRANSPARENCY: Every Verdant garment comes with a full supply chain disclosure. We use certified recycled polyester from post-consumer plastic bottles and TENCEL™ lyocell from sustainably managed forests.
+
+---
+
+[Source: verdant_brand_guide.txt]
+VERDANT BRAND GUIDE — INTERNAL USE ONLY
+Version 2.3 | Updated Q1 2026
+
+BRAND OVERVIEW
+==============
+Verdant is a sustainable activewear brand founded in 2019 in Portland, Oregon. Our mission is to make high-performance athletic apparel that doesn't compromise the environment or the people who make it.
+
+TARGET AUDIENCE
+===============
+Primary: Health-conscious millennials and Gen Z consumers (ages 22–38) who prioritize sustainability alongside performance. Secondary: Corporate wellness programs seeking sustainable branded merchandise.
+
+---
+
+[Source: verdant_sustainability.txt]
+WHAT WE DO NOT CLAIM
+=====================
+Verdant does NOT claim:
+- Carbon neutrality (in progress)
+- 100% sustainable materials (we're at 87%)
+- Fair Trade for all manufacturing (Sri Lanka factory in process)
+- B Corp status (application pending)
+
+Any campaign copy making these claims is inaccurate and exposes Verdant to greenwashing liability.
+
+---
+
+[Source: verdant_brand_guide.txt]
+APPROVED STATISTICS (as of Q1 2026)
+=====================================
+- 87% of materials by weight are certified sustainable
+- Take Back Program: 45,000+ garments recycled
+- 92% customer satisfaction in post-purchase surveys
+- Zero landfill in our Portugal factory since 2023
+- 3-year product warranty on all items",0.876,,,supported,"All verifiable factual claims—87% certified sustainable materials by weight, certified recycled polyester from post-consumer plastic bottles, TENCEL™ lyocell from sustainably managed forests, and full supply-chain disclosure for every garment—are stated in the source documents.",False,False,True,Must state 87% not 100%

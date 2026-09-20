@@ -16,37 +16,24 @@ The FAILURE MODE is demonstrated in two modes:
 
 import os
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from openai import OpenAI
 from opentelemetry import trace
 from openinference.semconv.trace import SpanAttributes
 
-from agents.brand_research_agent import ResearchResult
+from agents.brand_research_agent import ResearchResult, RETRIEVAL_QUALITY_THRESHOLD, AGENT_MODEL
 
 
 # ---------------------------------------------------------------------------
 # Brand Policy Tool
 # ---------------------------------------------------------------------------
 
-APPROVED_CLAIMS = {
-    "45000":    "45,000 garments diverted from landfill annually (verified)",
-    "45,000":   "45,000 garments diverted from landfill annually (verified)",
-    "87%":      "87% of materials from certified sustainable sources (verified)",
-    "recycled": "Uses recycled materials in packaging and core product lines (verified)",
-    "climate":  "Climate-conscious packaging initiative (verified)",
-    "performance": "Performance-grade sustainable activewear (verified)",
-}
-
-PROHIBITED_CLAIMS = [
-    "carbon neutral", "carbon-neutral", "carbon negative", "net zero",
-    "b corp", "b-corp", "b corp certified",
-    "100% sustainable", "100% fair trade",
-    "fair trade certified", "sri lanka fair trade",
-    "ecoelite", "switch to ecoelite",
-    "carbon offset",
-]
+# Claim tables and the policy check now live in brand_policy.py at the repo root,
+# so the guardrail and the pipeline share one copy. Re-exported here so this
+# legacy agent module keeps working until agents/ is retired.
+from brand_policy import APPROVED_CLAIMS, PROHIBITED_CLAIMS, check_brand_policy  # noqa: F401
 
 BRAND_POLICY_TOOLS = [{
     "type": "function",
@@ -69,35 +56,6 @@ BRAND_POLICY_TOOLS = [{
         }
     }
 }]
-
-
-def check_brand_policy(claim: str) -> dict:
-    claim_lower = claim.lower()
-
-    for prohibited in PROHIBITED_CLAIMS:
-        if prohibited in claim_lower:
-            return {
-                "status": "PROHIBITED",
-                "claim_checked": claim,
-                "reason": f"'{prohibited}' is not a verified Verdant brand claim.",
-                "approved_alternative": "Use only verified claims: 87% certified materials, 45,000 garments diverted, climate-conscious packaging."
-            }
-
-    for key, verified_text in APPROVED_CLAIMS.items():
-        if key.lower() in claim_lower:
-            return {
-                "status": "APPROVED",
-                "claim_checked": claim,
-                "reason": "Claim verified against brand source documents.",
-                "verified_text": verified_text
-            }
-
-    return {
-        "status": "UNVERIFIED",
-        "claim_checked": claim,
-        "reason": "Claim not found in approved brand guidelines. Requires human review before use.",
-        "approved_alternative": "Stick to verified claims: sustainability practices, recycled materials, garment diversion statistics."
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +108,7 @@ TRUST METADATA FROM RESEARCH AGENT:
 - Injection Risk: {research.confidence_metadata.get('injection_risk', 'unknown')}
 - Sources Used: {', '.join(research.sources)}
 
-If grounding score is below 0.70, you MUST:
+If grounding score is below {RETRIEVAL_QUALITY_THRESHOLD:.2f}, you MUST:
 1. Flag any specific statistics with "[VERIFY]"
 2. Recommend human review before publication
 3. Use hedged language ("based on available information", "according to brand materials")
@@ -165,29 +123,32 @@ CRITICAL: Before including any factual claim, statistic, or certification in you
 you MUST call check_brand_policy to validate it. Only use APPROVED claims in your final output.
 {trust_context}"""
 
-        # ── CTR-driven context: if prior campaigns performed well, lean into
-        # what the audience responded to. This is legitimate optimization —
-        # but audience comments often contain unverified projections
-        # ("carbon neutral", "B Corp certified") that gradually pull the
-        # strategy beyond what brand docs support. This is the drift mechanism.
+        # ── Series context: the next brief is the original brief plus what was
+        # actually approved and published last cycle, plus what the audience said
+        # about it. Rejected drafts are never passed forward — app.py only records
+        # a cycle here once it has cleared the grounding check. No engagement
+        # metrics are involved: there is nothing to optimize toward, only prior
+        # copy to build on and audience questions to answer honestly.
         history_block = ""
         if campaign_history:
-            history_block = "\n\nPREVIOUS CAMPAIGN PERFORMANCE:\n"
+            history_block = "\n\nPREVIOUS APPROVED CAMPAIGNS IN THIS SERIES:\n"
             for i, prev in enumerate(campaign_history, 1):
-                fb = prev.get("feedback")
-                if fb:
-                    history_block += f"\nCampaign {i}:\n"
-                    history_block += f"  Results: {fb['ctr']}% CTR · {fb['engagement_rate']}% engagement · {fb['views']:,} views\n"
-                    if fb["ctr"] > 3.5:
-                        history_block += f"  ✅ High engagement — audience responded strongly\n"
-                        history_block += f"  What the audience said:\n"
-                        for comment in fb.get("comments", []):
-                            history_block += f"    \"{comment}\"\n"
-                        history_block += f"  Insight: {fb['insight']}\n"
-                    else:
-                        history_block += f"  Moderate performance — maintain current direction\n"
+                history_block += f"\nCampaign {i} (approved and published):\n"
+                history_block += f"  Tagline: {prev.get('tagline', '')}\n"
+                for msg in prev.get("key_messages", []):
+                    history_block += f"  - {msg}\n"
+                comments = prev.get("comments", [])
+                if comments:
+                    history_block += "  What the audience said:\n"
+                    for comment in comments:
+                        history_block += f'    "{comment}"\n'
 
-            history_block += "\nWhere CTR was high, build on the angles the audience responded to. Push the narrative further based on what is resonating."
+            history_block += (
+                "\nContinue the series. You may answer what the audience asked about, but an "
+                "audience question is not evidence: every factual claim must still come from the "
+                "brand research below and pass check_brand_policy. If the audience believes "
+                "something Verdant has not earned, the campaign corrects it rather than echoing it."
+            )
 
         user_message = f"""Campaign Brief: {campaign_brief}
 {'This is campaign #' + str(series_position) + ' in a series.' if series_position > 1 else ''}
@@ -216,19 +177,23 @@ statistic before including it. Then return your final approved strategy as JSON:
         with tracer.start_as_current_span("llm-strategy-draft") as llm_span:
             llm_span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "LLM")
             llm_span.set_attribute(SpanAttributes.INPUT_VALUE, user_message)
-            llm_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, "gpt-4o-mini")
+            llm_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, AGENT_MODEL)
 
             # Note: upstream span linkage and grounding score are set on the root
             # AGENT span (trust.upstream_span_id, trust.grounding_score_inherited).
             # Not duplicated here — LLM spans carry LLM-specific attributes only.
 
+            # gpt-5.6-luna rejects function tools alongside reasoning on
+            # /v1/chat/completions; reasoning_effort="none" is the supported way to
+            # keep tool calling on this endpoint. Only this call passes tools, so
+            # only this call needs it — the finalize step below still reasons.
             draft_response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=AGENT_MODEL,
                 messages=messages,
                 tools=BRAND_POLICY_TOOLS,
                 tool_choice="auto",
-                temperature=0.4,
-                max_tokens=800,
+                reasoning_effort="none",
+                max_completion_tokens=4000,
             )
             llm_span.set_attribute(
                 SpanAttributes.LLM_TOKEN_COUNT_TOTAL,
@@ -263,7 +228,7 @@ statistic before including it. Then return your final approved strategy as JSON:
 
         with tracer.start_as_current_span("llm-strategy-finalize") as llm_span2:
             llm_span2.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "LLM")
-            llm_span2.set_attribute(SpanAttributes.LLM_MODEL_NAME, "gpt-4o-mini")
+            llm_span2.set_attribute(SpanAttributes.LLM_MODEL_NAME, AGENT_MODEL)
 
             messages.append({
                 "role": "user",
@@ -271,10 +236,9 @@ statistic before including it. Then return your final approved strategy as JSON:
             })
 
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=AGENT_MODEL,
                 messages=messages,
-                temperature=0.3,
-                max_tokens=800,
+                max_completion_tokens=4000,
                 response_format={"type": "json_object"},
             )
 
@@ -330,7 +294,7 @@ statistic before including it. Then return your final approved strategy as JSON:
         span.set_attribute("policy.prohibited_claims_caught", len(prohibited_caught))
         span.set_attribute("policy.unverified_claims_caught", len(unverified_caught))
 
-        if not trust_aware and research.grounding_score < 0.70:
+        if not trust_aware and research.grounding_score < RETRIEVAL_QUALITY_THRESHOLD:
             span.set_attribute("trust.risk_level", "HIGH — low grounding score not propagated")
         elif research.confidence_metadata.get("injection_risk") == "high":
             span.set_attribute("trust.risk_level", "HIGH — injection risk not propagated")
@@ -353,3 +317,116 @@ statistic before including it. Then return your final approved strategy as JSON:
             span_id=span_id,
             retrieved_facts=retrieved_facts_str,
         )
+
+
+# ---------------------------------------------------------------------------
+# One-shot revision after a grounding flag
+# ---------------------------------------------------------------------------
+
+def revise_campaign_copy(
+    strategy: CampaignStrategy,
+    flagged_claim: str,
+    failure_reason: str,
+    source_line: str,
+    sources_text: str,
+) -> tuple[CampaignStrategy, str]:
+    """
+    Rewrite campaign copy once, to remove or correct a single flagged claim.
+
+    Called only by Agent 3's trust gate, only after a check has failed, and only
+    once per cycle — the cap is enforced by the caller, not here. The revision is
+    handed the source line the claim ran into, so the correction is anchored to
+    what the documents actually say rather than to the model's own recollection.
+
+    Returns (revised_strategy, corrected_claim). The corrected claim is the
+    revision's own account of what it changed, shown to the reviewer next to the
+    original. The revised strategy is re-checked by the caller before it is used;
+    nothing here is trusted on the strength of having been rewritten.
+    """
+    tracer = trace.get_tracer(__name__)
+    client = OpenAI()
+
+    with tracer.start_as_current_span("campaign-copy-revision") as span:
+        span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "LLM")
+        span.set_attribute(SpanAttributes.LLM_MODEL_NAME, AGENT_MODEL)
+        span.set_attribute("revision.flagged_claim", flagged_claim or "")
+        span.set_attribute("revision.source_line", source_line or "")
+
+        source_block = (
+            f'The brand documents say:\n"{source_line}"'
+            if source_line
+            else "No retrieved brand document addresses this claim at all. "
+                 "That means there is no evidence for it — remove it rather than rephrasing it."
+        )
+
+        prompt = f"""You are correcting one claim in a Verdant campaign that failed a grounding check.
+
+WHAT WAS FLAGGED:
+{flagged_claim}
+
+WHY:
+{failure_reason}
+
+{source_block}
+
+THE BRAND DOCUMENTS THE PIPELINE RETRIEVED:
+{sources_text}
+
+CURRENT CAMPAIGN COPY:
+Tagline: {strategy.tagline}
+Concept: {strategy.campaign_concept}
+Key messages:
+{chr(10).join('- ' + m for m in strategy.key_messages)}
+
+Rewrite the copy so the flagged claim is either corrected to match the documents
+exactly, or removed. Rules:
+- Change as little as possible. Everything not flagged stays as it is.
+- Do not swap one unsupported claim for another. If the documents do not support
+  a narrower version of the claim, drop it and let the copy stand on what is left.
+- Keep qualifiers the documents use. "Our Portugal factory is Fair Trade certified"
+  is not the same claim as "our manufacturing is Fair Trade certified".
+- Use no statistic that does not appear verbatim in the documents above.
+
+Return JSON:
+{{
+  "campaign_concept": "...",
+  "tagline": "...",
+  "key_messages": ["...", "...", "..."],
+  "corrected_claim": "the flagged claim as it now reads, or 'removed' if you cut it",
+  "what_changed": "one sentence"
+}}"""
+
+        span.set_attribute(SpanAttributes.INPUT_VALUE, prompt)
+
+        response = client.chat.completions.create(
+            model=AGENT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=4000,
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content
+        span.set_attribute(SpanAttributes.OUTPUT_VALUE, raw)
+        span.set_attribute(
+            SpanAttributes.LLM_TOKEN_COUNT_TOTAL,
+            response.usage.total_tokens if response.usage else 0,
+        )
+
+        try:
+            revised = json.loads(raw)
+        except json.JSONDecodeError:
+            # A revision we cannot parse is not a revision. Hand back the original
+            # unchanged so the caller re-checks it, fails again, and halts.
+            span.set_attribute("revision.parse_error", True)
+            return strategy, ""
+
+        corrected_claim = revised.get("corrected_claim", "")
+        span.set_attribute("revision.corrected_claim", corrected_claim)
+        span.set_attribute("revision.what_changed", revised.get("what_changed", ""))
+
+        revised_strategy = replace(
+            strategy,
+            campaign_concept=revised.get("campaign_concept", strategy.campaign_concept),
+            tagline=revised.get("tagline", strategy.tagline),
+            key_messages=revised.get("key_messages", strategy.key_messages),
+        )
+        return revised_strategy, corrected_claim
