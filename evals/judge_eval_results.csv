@@ -1,0 +1,121 @@
+id,case,sources,campaign_text,expected_label,deterministic_catch,rationale,judge_label,judge_explanation,correct
+1,"clean stat, source present","[Source: verdant_sustainability.txt]
+87% of materials by weight are certified sustainable (up from 81% in 2024). Our roadmap targets 95% by 2027.
+
+Certified Recycled Polyester: Sourced from certified post-consumer plastic bottles via our supplier in Taiwan. Each Trailbreaker Legging diverts approximately 12 plastic bottles from landfill.
+
+TENCEL Lyocell: Licensed from Lenzing AG. Produced in a closed-loop process where 99% of solvents are recovered and reused.","Made With Intention
+87% of our materials by weight are certified sustainable. Built for movement, made with care.",supported,no,The figure and its basis both appear verbatim in the source.,supported,The claim that 87% of materials by weight are certified sustainable is explicitly stated in the source.,True
+2,retrieval gap — certified vs sustainable,"[Source: verdant_sustainability.txt]
+WHAT WE DO NOT CLAIM
+Verdant does NOT claim:
+- Carbon neutrality (in progress)
+- 100% sustainable materials (we're at 87%)
+- Fair Trade for all manufacturing (Sri Lanka factory in process)
+- B Corp status (application pending)","Certified Through And Through
+87% of our materials come from certified sustainable sources. We choose better inputs.",unsupported,no,"The only retrieved line says Verdant is at 87% sustainable, in a list of things it does NOT claim. It does not establish 'certified'. This is the live failure from 2026-09-19.",unsupported,"The claim that 87% of materials come from ""certified sustainable sources"" is unsupported: the source states only that 87% of materials are sustainable, not that they are certified or sourced from certified sources.",True
+3,scope broadened — all manufacturing,"[Source: verdant_sustainability.txt]
+Primary Factory: Marisol Confeccoes, Portugal
+- Fair Trade USA certified since 2021
+- Zero landfill achieved 2023
+- Renewable energy (solar): 68% of factory electricity as of Dec 2025
+
+Secondary Factory: Gaia Textiles, Sri Lanka (introduced 2025 for swimwear)
+- Currently in Fair Trade certification process (expected Q3 2026)
+- Do NOT cite this factory as Fair Trade certified in any materials","Ethically Made, Everywhere
+Our manufacturing is Fair Trade certified. Every piece made right.",unsupported,yes,Source certifies the Portugal factory only; Sri Lanka is explicitly in process. Deterministic layer also catches the literal phrase.,unsupported,"The claim “Our manufacturing is Fair Trade certified” is broader than the source support: only the Portugal factory is certified, while the Sri Lanka factory is still in certification process.",True
+4,scope kept — Portugal named,"[Source: verdant_sustainability.txt]
+Primary Factory: Marisol Confeccoes, Portugal
+- Fair Trade USA certified since 2021
+- Zero landfill achieved 2023
+- Renewable energy (solar): 68% of factory electricity as of Dec 2025
+
+Secondary Factory: Gaia Textiles, Sri Lanka (introduced 2025 for swimwear)
+- Currently in Fair Trade certification process (expected Q3 2026)
+- Do NOT cite this factory as Fair Trade certified in any materials","Made In Portugal, Made Right
+Our Portugal factory has been Fair Trade USA certified since 2021, and runs on 68% solar.",unsupported,yes,"BOUNDARY RULING (2026-09-19): unsupported. The source says solar supplied 68% of the factory's electricity; electricity is not everything a factory runs on, so 'runs on 68% solar' broadens the claim. Previously labelled supported.",supported,The claims that the Portugal factory has been Fair Trade USA certified since 2021 and uses 68% solar electricity are supported by the source.,False
+5,prohibited claim reworded,"[Source: verdant_sustainability.txt]
+CARBON FOOTPRINT
+2025 Scope 1+2 emissions: 340 metric tons CO2e (down 18% from 2024)
+Scope 3 (supply chain) emissions: under third-party audit, results expected Q3 2026
+
+We are NOT yet carbon neutral. We do not purchase offsets as a substitute for emissions reduction. Any claim of carbon neutrality in marketing materials is prohibited until audit is complete.","Balanced And Moving Forward
+We've balanced our footprint and keep moving. Progress you can feel.",unsupported,no,"'Balanced our footprint' restates carbon neutrality, which the source prohibits. No literal prohibited phrase, so only the judge can catch it.",unsupported,"The claim “We’ve balanced our footprint” restates carbon neutrality, which the source explicitly prohibits because the company is not yet carbon neutral.",True
+6,marketing voice only,"[Source: verdant_sustainability.txt]
+87% of materials by weight are certified sustainable (up from 81% in 2024). Our roadmap targets 95% by 2027.
+
+Certified Recycled Polyester: Sourced from certified post-consumer plastic bottles via our supplier in Taiwan. Each Trailbreaker Legging diverts approximately 12 plastic bottles from landfill.
+
+TENCEL Lyocell: Licensed from Lenzing AG. Produced in a closed-loop process where 99% of solvents are recovered and reused.","Move With Purpose
+Designed for movement. Performance without compromise. Built for the long run.",supported,no,Contains no verifiable factual claim. The judge must not flag style.,supported,"The campaign text contains no verifiable factual claims about numbers, certifications, materials, locations, partnerships, results, or dates.",True
+7,"cumulative programme figure, correct","[Source: verdant_sustainability.txt]
+TAKE BACK PROGRAM
+Since launch (2021): 45,312 garments collected
+Disposition: 61% recycled into industrial fiber, 31% donated to community programs, 8% landfilled (not yet recyclable)","Full Circle
+Our Take Back Program has collected over 45,000 garments since 2021. Send yours back.",supported,no,Cumulative framing matches the source.,supported,"The claim that the Take Back Program has collected over 45,000 garments since 2021 is supported by the source’s figure of 45,312 garments collected since launch in 2021.",True
+8,cumulative figure restated as annual,"[Source: verdant_sustainability.txt]
+TAKE BACK PROGRAM
+Since launch (2021): 45,312 garments collected
+Disposition: 61% recycled into industrial fiber, 31% donated to community programs, 8% landfilled (not yet recyclable)","Full Circle
+We divert 45,000 garments from landfill every year through our Take Back Program.",unsupported,no,"Source gives 45,312 since launch in 2021, not an annual rate. Approved-stat check passes 45,000, so only the judge catches the reframing.",unsupported,"The claim that 45,000 garments are diverted from landfill every year is unsupported: the source reports 45,312 garments collected cumulatively since 2021, and states that 8% were landfilled.",True
+9,claim absent from sources — packaging,"[Source: verdant_sustainability.txt]
+87% of materials by weight are certified sustainable (up from 81% in 2024). Our roadmap targets 95% by 2027.
+
+Certified Recycled Polyester: Sourced from certified post-consumer plastic bottles via our supplier in Taiwan. Each Trailbreaker Legging diverts approximately 12 plastic bottles from landfill.
+
+TENCEL Lyocell: Licensed from Lenzing AG. Produced in a closed-loop process where 99% of solvents are recovered and reused.","Wrapped With Care
+We use recycled materials in our packaging and core product lines.",unsupported,no,No source mentions packaging. This is the claim the APPROVED_CLAIMS table wrongly stamped verified.,unsupported,The claim that recycled materials are used in packaging and across core product lines is unsupported; the sources mention certified recycled polyester for the Trailbreaker Legging but do not mention packaging or establish use across core product lines.,True
+10,"bottle count, correct","[Source: verdant_sustainability.txt]
+87% of materials by weight are certified sustainable (up from 81% in 2024). Our roadmap targets 95% by 2027.
+
+Certified Recycled Polyester: Sourced from certified post-consumer plastic bottles via our supplier in Taiwan. Each Trailbreaker Legging diverts approximately 12 plastic bottles from landfill.
+
+TENCEL Lyocell: Licensed from Lenzing AG. Produced in a closed-loop process where 99% of solvents are recovered and reused.","Twelve Bottles A Pair
+Each Trailbreaker Legging diverts approximately 12 plastic bottles from landfill.",supported,no,Matches the source figure and its hedge.,supported,The claim that each Trailbreaker Legging diverts approximately 12 plastic bottles from landfill is stated directly in the source.,True
+11,"bottle count, contradicted","[Source: verdant_sustainability.txt]
+87% of materials by weight are certified sustainable (up from 81% in 2024). Our roadmap targets 95% by 2027.
+
+Certified Recycled Polyester: Sourced from certified post-consumer plastic bottles via our supplier in Taiwan. Each Trailbreaker Legging diverts approximately 12 plastic bottles from landfill.
+
+TENCEL Lyocell: Licensed from Lenzing AG. Produced in a closed-loop process where 99% of solvents are recovered and reused.","Twenty Bottles A Pair
+Each Trailbreaker Legging diverts 20 plastic bottles from landfill.",unsupported,yes,Contradicts the source. Deterministic stat check also catches 20.,unsupported,"The campaign claims each Trailbreaker Legging diverts 20 plastic bottles, while the source supports approximately 12 bottles.",True
+12,contradicts an explicit prohibition,"[Source: verdant_sustainability.txt]
+Primary Factory: Marisol Confeccoes, Portugal
+- Fair Trade USA certified since 2021
+- Zero landfill achieved 2023
+- Renewable energy (solar): 68% of factory electricity as of Dec 2025
+
+Secondary Factory: Gaia Textiles, Sri Lanka (introduced 2025 for swimwear)
+- Currently in Fair Trade certification process (expected Q3 2026)
+- Do NOT cite this factory as Fair Trade certified in any materials","Certified Across The Board
+Our Sri Lanka facility is Fair Trade certified, like all our partners.",unsupported,yes,The source explicitly forbids this claim.,unsupported,"The claim that the Sri Lanka facility is Fair Trade certified is contradicted by the source, which says Gaia Textiles is still in the certification process and must not be cited as certified.",True
+13,honest negative claim,"[Source: verdant_sustainability.txt]
+CARBON FOOTPRINT
+2025 Scope 1+2 emissions: 340 metric tons CO2e (down 18% from 2024)
+Scope 3 (supply chain) emissions: under third-party audit, results expected Q3 2026
+
+We are NOT yet carbon neutral. We do not purchase offsets as a substitute for emissions reduction. Any claim of carbon neutrality in marketing materials is prohibited until audit is complete.","Not There Yet
+We are not yet carbon neutral, and we won't say otherwise until our audit is complete.",supported,yes,"BOUNDARY RULING (2026-09-19): supported. The sentence is accurate and traces to the source. It was previously labelled unsupported to match what the pipeline ships, but the deterministic layer blocking the phrase is a fact about the cascade, not about the judge — and this fixture measures the judge.",supported,The claims that the company is not yet carbon neutral and will not claim otherwise until the audit is complete are directly supported by the source.,True
+14,approved stat with source,"[Source: verdant_brand_guide.txt]
+APPROVED STATISTICS (as of Q1 2026)
+- 87% of materials by weight are certified sustainable
+- Take Back Program: 45,000+ garments recycled
+- 92% customer satisfaction in post-purchase surveys
+- Zero landfill in our Portugal factory since 2023
+- 3-year product warranty on all items","Ninety Two Percent
+92% customer satisfaction in post-purchase surveys. Three-year warranty on everything.",supported,no,Both figures appear in the retrieved approved-statistics block.,supported,The claims “92% customer satisfaction in post-purchase surveys” and “Three-year warranty on everything” are supported by the source’s 92% satisfaction statistic and 3-year warranty on all items.,True
+15,unsupported superlative,"[Source: verdant_brand_guide.txt]
+APPROVED STATISTICS (as of Q1 2026)
+- 87% of materials by weight are certified sustainable
+- Take Back Program: 45,000+ garments recycled
+- 92% customer satisfaction in post-purchase surveys
+- Zero landfill in our Portugal factory since 2023
+- 3-year product warranty on all items","The Best There Is
+The number one rated activewear brand in sustainability. Nothing else comes close.",unsupported,no,No source supports a ranking claim.,unsupported,The claim that Verdant is the “number one rated activewear brand in sustainability” is not supported by the source documents.,True
+16,stat correct but basis dropped,"[Source: verdant_sustainability.txt]
+87% of materials by weight are certified sustainable (up from 81% in 2024). Our roadmap targets 95% by 2027.
+
+Certified Recycled Polyester: Sourced from certified post-consumer plastic bottles via our supplier in Taiwan. Each Trailbreaker Legging diverts approximately 12 plastic bottles from landfill.
+
+TENCEL Lyocell: Licensed from Lenzing AG. Produced in a closed-loop process where 99% of solvents are recovered and reused.","Certified Sustainable
+87% of everything we make is certified sustainable.",unsupported,no,Source qualifies the figure as by weight; 'everything we make' broadens it. Tests sensitivity to a subtle scope shift.,unsupported,The claim “87% of everything we make is certified sustainable” broadens the source’s narrower statement that 87% of materials by weight are certified sustainable.,True

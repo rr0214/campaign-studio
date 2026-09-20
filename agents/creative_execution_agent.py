@@ -3,7 +3,7 @@ Agent 3: Creative Execution Agent
 ===================================
 Takes the approved campaign strategy from Agent 2 and produces a complete
 social media creative package:
-  - A 5-second Veo 2 campaign video (Google Gen AI)
+  - A 5-second Veo 3.1 Lite campaign video (Google Gen AI)
   - Social media caption + hashtags (GPT-4o-mini)
 
 TRUST GATE: the campaign text is checked against the brand documents Agent 1
@@ -17,7 +17,7 @@ Arize AX trace structure:
   creative-execution-agent (AGENT)
     ├── claim-grounding-check (CHAIN)  — deterministic checks, then LLM judge
     ├── prompt-engineering (LLM)       — builds brand-safe video prompt
-    ├── veo-video-generation (TOOL)    — generates 5s social video via Veo 2
+    ├── veo-video-generation (TOOL)    — generates 5s social video via Veo 3.1 Lite
     └── caption-generation (LLM)      — writes social caption + hashtags
 """
 

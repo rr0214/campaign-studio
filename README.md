@@ -1,8 +1,8 @@
 # Brand Trust Agent
 
-A three-agent pipeline for brand-safe campaign generation, instrumented with **Arize AX**.
-Built for Verdant, a sustainable activewear brand, as a demonstration of multi-agent
-observability and trust signal propagation.
+A verification pipeline for brand-safe campaign generation, instrumented with **Arize AX**.
+Built for Verdant, a sustainable activewear brand, as a demonstration of claim
+grounding, guardrails and per-step cost observability.
 
 ## Architecture
 
@@ -10,15 +10,58 @@ observability and trust signal propagation.
 
 ## What It Does
 
-| Agent | Role | Arize Spans |
-|-------|------|-------------|
-| **Agent 1: Brand Research** | RAG over Verdant brand docs via ChromaDB. Returns a grounding score (0–1) based on retrieval quality — reported, not used as the gate. | `RETRIEVER` + `LLM` |
-| **Agent 2: Campaign Strategy** | Builds campaign strategy from research. Validates every factual claim via `check_brand_policy()` tool call. | `AGENT` → `LLM` → `TOOL` → `LLM` |
-| **Agent 3: Creative Execution** | Generates caption, hashtags, and Veo video prompt. Only runs if trust gate passes. | `AGENT` → `LLM` → `TOOL` (Veo) → `LLM` |
+A **pipeline**, not an agent system. The control flow is fixed in `pipeline/run.py` — no model decides what happens next. The only branches are on data: did verification pass, did routing publish.
 
-**Trust gate:** Before Agent 3 generates anything, the campaign text is checked against the brand documents Agent 1 actually retrieved (`evals/grounding_check.py`). Cheap checks run first — prohibited phrases, statistics outside the approved set, competitor names — in plain Python, no model calls. Only text that survives them reaches an LLM judge, which looks for claims the sources do not support, including claims that quietly broaden a narrow source ("our Portugal factory is Fair Trade certified" → "our manufacturing is Fair Trade certified"). Content is blocked, not just flagged, and the halt reason names the specific claim.
+| Step | What it does | Span kind |
+|------|--------------|-----------|
+| **Retrieve** | ChromaDB over the brand docs. Plain function, no model call. | `RETRIEVER` |
+| **Generate** | One `gpt-5.6-luna` call, structured output: copy **plus an explicit `claims[]` list**, each claim quoting its source. | `LLM` |
+| **Verify** | Deterministic checks (free), then the `gpt-5.6-terra` judge only on survivors. | `GUARDRAIL` → `TOOL` + `LLM` |
+| **Repair** | One rewrite against the contradicting source line. Hard cap of one attempt. | `LLM` |
+| **Re-verify** | The repair gets checked too. Nothing is trusted for having been rewritten. | `GUARDRAIL` |
+| **Route** | Publish with receipts, flag to human, or sample for audit. Plain function. | `CHAIN` |
+| **Assets** | Veo video, only once routing publishes. | `TOOL` |
 
-The grounding score no longer gates. It is built from retrieval signals and never saw the generated text, so a perfect retrieval plus a fabricating model scored high and passed.
+```
+campaign-run                  CHAIN   (root)
+├── retrieve                  RETRIEVER
+├── generate                  LLM
+├── verify                    GUARDRAIL
+│   ├── deterministic-checks  TOOL
+│   └── grounding-judge       LLM        (only if deterministic passed)
+├── repair                    LLM        (only on failure)
+├── re-verify                 GUARDRAIL  (only on failure)
+├── route                     CHAIN
+└── assets                    TOOL       (only when routing publishes)
+```
+
+**The guardrail** (`evals/grounding_check.py`) compares the copy against *the chunks actually retrieved*, not the full corpus — so a retrieval failure is visible rather than silently papered over. It catches claims that quietly broaden a narrow source ("our Portugal factory is Fair Trade certified" → "our manufacturing is Fair Trade certified"), and the halt reason names the specific claim.
+
+The retrieval-quality score is **reported, not gating**. It is built from retrieval signals and never sees the generated text, so a perfect retrieval plus a fabricating model scored high and passed.
+
+**Routing and the audit sample.** A flagged campaign goes to a human and does not publish. A passing campaign publishes — *including when it is sampled*. Sampling audits what normally happens, so a sampled item takes the normal path and the review copy goes out in parallel. Holding 10% of approved content back would create a second behaviour and mean observing that instead.
+
+**Cost.** Every step's token usage is measured and priced; `cost.step_tokens` / `cost.step_usd` sit on each span and the total on the root, so cost per campaign is visible broken down by step. A typical clean run is about 5,000 tokens and $0.0026. Where a price is unknown or a run crosses into the long-context tier, that is flagged rather than quietly under-reported.
+
+## Evals
+
+Three scripts, three different questions. They were one script; that was the problem.
+
+```bash
+python3 -m evals.eval_retrieval     # Did search find the right chunks?
+python3 -m evals.eval_end_to_end    # Does the pipeline publish anything bad?
+python3 -m evals.eval_judge         # Does the judge agree with a fixed label?
+```
+
+**Retrieval eval** — deterministic, no judge, costs a fraction of a cent. Checks whether the facts a brief needs are actually in the retrieved chunks, using the golden dataset's `ground_truth_answer_contains` as ground truth. Current result: **70% mean fact recall @4, 9 of 20 briefs missing at least one required fact — while all 20 scored "high" grounding.** That gap is the whole argument for not gating on the grounding score.
+
+**End-to-end eval** — runs the real pipeline. The number that matters is **escapes**: campaigns routed to publish that still contain a claim the brief's row lists as prohibited. Its inputs move whenever the generator changes, so it is a snapshot, not a measurement.
+
+**Judge eval** — frozen text, fixed hand-assigned labels, no pipeline at all. Sixteen cases in `data/judge_eval_set.csv` that never change, so a prompt or model change is measured against a fixed target.
+
+> The labels in `data/judge_eval_set.csv` were hand-assigned against the brand documents and **need review by someone who owns the brand voice**. Read them before trusting the numbers.
+
+Keeping these separate matters. When they were one script, the judge was scored against `expected_hallucination` — a column describing how risky a *query* looked when the dataset was written, not whether the *generated text* contained a false claim. That produced TPR 0.00 for a judge that was right on every disputed row.
 
 ## Series Mode
 
@@ -40,10 +83,11 @@ Every cycle is recorded: what was flagged, which layer caught it, whether the re
 
 Use the sidebar toggle to switch between scenarios:
 
-1. ✅ **Normal run** — all three agents complete, creative package delivered
-2. ⚠️ **Trust gap (silent failure)** — weak retrieval, Agent 2 operates without grounding context
-3. 🔴 **Prompt injection** — adversarial document hijacks Agent 2 output
-4. 🛡️ **Trust-aware mode (the fix)** — grounding score and injection risk propagate end-to-end
+1. ✅ **Normal run** — retrieval, generation, verification, publish with receipts
+2. ⚠️ **Weak retrieval** — one chunk instead of four, so claims may have no retrieved source to check against
+3. 🔴 **Prompt injection** — an adversarial document tries to hijack the output; Verify reads the generated text, not the instruction
+
+The old "trust gap" and "trust-aware" scenarios are gone. They existed so Agent 2 could inherit Agent 1's confidence score; there are no agents and nothing to propagate between.
 
 ## Setup
 
@@ -86,10 +130,17 @@ Open [http://localhost:8501](http://localhost:8501)
 ```
 brand-trust-agent/
 ├── app.py                              # Streamlit entry point. Tracing initialized here.
-├── agents/
+├── agents/                             # Legacy three-agent implementation, superseded
 │   ├── brand_research_agent.py         # Agent 1: ChromaDB RAG + grounding score
 │   ├── campaign_strategy_agent.py      # Agent 2: Strategy + brand policy tool calls
 │   └── creative_execution_agent.py     # Agent 3: Trust gate + Veo prompt + caption
+├── brand_policy.py                     # Approved/prohibited claim tables + policy check
+├── pipeline/
+│   ├── retrieval.py                    # RETRIEVE + query derivation
+│   ├── steps.py                        # GENERATE, VERIFY, REPAIR, ROUTE, ASSETS
+│   ├── run.py                          # Fixed control flow + tracing
+│   ├── pricing.py                      # Token accounting, USD, tier flagging
+│   └── usage_capture.py                # Token capture for calls we don't own
 ├── evals/
 │   ├── grounding_check.py              # Deterministic checks + LLM judge. The gate Agent 3 calls.
 │   └── run_evals.py                    # Golden-dataset runner + judge validation (TPR/TNR)

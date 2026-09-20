@@ -30,23 +30,10 @@ from agents.brand_research_agent import ResearchResult, RETRIEVAL_QUALITY_THRESH
 # Brand Policy Tool
 # ---------------------------------------------------------------------------
 
-APPROVED_CLAIMS = {
-    "45000":    "45,000 garments diverted from landfill annually (verified)",
-    "45,000":   "45,000 garments diverted from landfill annually (verified)",
-    "87%":      "87% of materials from certified sustainable sources (verified)",
-    "recycled": "Uses recycled materials in packaging and core product lines (verified)",
-    "climate":  "Climate-conscious packaging initiative (verified)",
-    "performance": "Performance-grade sustainable activewear (verified)",
-}
-
-PROHIBITED_CLAIMS = [
-    "carbon neutral", "carbon-neutral", "carbon negative", "net zero",
-    "b corp", "b-corp", "b corp certified",
-    "100% sustainable", "100% fair trade",
-    "fair trade certified", "sri lanka fair trade",
-    "ecoelite", "switch to ecoelite",
-    "carbon offset",
-]
+# Claim tables and the policy check now live in brand_policy.py at the repo root,
+# so the guardrail and the pipeline share one copy. Re-exported here so this
+# legacy agent module keeps working until agents/ is retired.
+from brand_policy import APPROVED_CLAIMS, PROHIBITED_CLAIMS, check_brand_policy  # noqa: F401
 
 BRAND_POLICY_TOOLS = [{
     "type": "function",
@@ -69,35 +56,6 @@ BRAND_POLICY_TOOLS = [{
         }
     }
 }]
-
-
-def check_brand_policy(claim: str) -> dict:
-    claim_lower = claim.lower()
-
-    for prohibited in PROHIBITED_CLAIMS:
-        if prohibited in claim_lower:
-            return {
-                "status": "PROHIBITED",
-                "claim_checked": claim,
-                "reason": f"'{prohibited}' is not a verified Verdant brand claim.",
-                "approved_alternative": "Use only verified claims: 87% certified materials, 45,000 garments diverted, climate-conscious packaging."
-            }
-
-    for key, verified_text in APPROVED_CLAIMS.items():
-        if key.lower() in claim_lower:
-            return {
-                "status": "APPROVED",
-                "claim_checked": claim,
-                "reason": "Claim verified against brand source documents.",
-                "verified_text": verified_text
-            }
-
-    return {
-        "status": "UNVERIFIED",
-        "claim_checked": claim,
-        "reason": "Claim not found in approved brand guidelines. Requires human review before use.",
-        "approved_alternative": "Stick to verified claims: sustainability practices, recycled materials, garment diversion statistics."
-    }
 
 
 # ---------------------------------------------------------------------------

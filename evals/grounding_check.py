@@ -34,10 +34,11 @@ unavailable judge is not evidence that the text is grounded.
 """
 
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional
 
-from agents.campaign_strategy_agent import check_brand_policy
+from brand_policy import check_brand_policy
 
 # ---------------------------------------------------------------------------
 # Failure types (span attribute values — keep stable, they're queried in Arize)
@@ -436,25 +437,84 @@ def run_deterministic_checks(
     return None
 
 
+class _NullSpans:
+    """No-op span factory. Keeps the cascade traceable without requiring OTel."""
+
+    @contextmanager
+    def deterministic(self):
+        yield None
+
+    @contextmanager
+    def judge(self):
+        yield None
+
+
+class TracedSpans:
+    """
+    Emits the child spans the pipeline's `verify` step needs, from inside the
+    cascade — so the ordering and the fail-closed branch live in exactly one
+    place. Pass an instance as `spans=` to run_grounding_check().
+    """
+
+    def __init__(self, tracer, span_kinds):
+        self._tracer = tracer
+        self._kinds = span_kinds  # {"tool": ..., "llm": ...} — values are strings
+
+    @contextmanager
+    def _span(self, name, kind):
+        with self._tracer.start_as_current_span(name) as span:
+            span.set_attribute("openinference.span.kind", kind)
+            yield span
+
+    @contextmanager
+    def deterministic(self):
+        with self._span("deterministic-checks", self._kinds["tool"]) as span:
+            yield span
+
+    @contextmanager
+    def judge(self):
+        with self._span("grounding-judge", self._kinds["llm"]) as span:
+            yield span
+
+
 def run_grounding_check(
     campaign_text: str,
     retrieved_chunks,
     model=None,
     upstream_hallucination_flag: bool = False,
+    spans=None,
 ) -> GroundingCheckResult:
     """
     Full cascade: deterministic checks, then the judge on whatever survives.
     Deterministic failures never reach the judge — that's the cost saving,
     and `judge_called` on the span makes it measurable.
+
+    `spans` optionally supplies context managers for the two layers, so a caller
+    that traces gets child spans without a second copy of this ordering logic.
+    Defaults to a no-op, so untraced callers behave exactly as before.
     """
-    deterministic = run_deterministic_checks(campaign_text, upstream_hallucination_flag)
+    spans = spans or _NullSpans()
+
+    with spans.deterministic() as det_span:
+        deterministic = run_deterministic_checks(campaign_text, upstream_hallucination_flag)
+        if det_span is not None:
+            det_span.set_attribute("tool.name", "deterministic-checks")
+            det_span.set_attribute(
+                "output.value",
+                deterministic.failure_type if deterministic else "PASSED",
+            )
     if deterministic is not None:
         return deterministic
 
     sources_text = format_sources(retrieved_chunks)
 
     try:
-        label, explanation = run_judge(campaign_text, sources_text, model=model)
+        with spans.judge() as judge_span:
+            label, explanation = run_judge(campaign_text, sources_text, model=model)
+            if judge_span is not None:
+                judge_span.set_attribute("llm.model_name", JUDGE_MODEL)
+                judge_span.set_attribute("input.value", campaign_text)
+                judge_span.set_attribute("output.value", f"{label}: {explanation}")
     except Exception as exc:
         # Fail closed: an unavailable judge is not evidence of grounding.
         return GroundingCheckResult(
