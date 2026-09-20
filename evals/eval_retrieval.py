@@ -38,7 +38,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pandas as pd
 
-from pipeline.retrieval import derive_research_query, retrieve
+from pipeline.retrieval import (DEFAULT_N_RESULTS, derive_research_query,
+                                expand_query, retrieve)
 
 TOKEN_COVERAGE_THRESHOLD = 0.60
 
@@ -72,7 +73,8 @@ def split_expected(raw: str) -> list:
     return [f.strip() for f in str(raw).split(", ") if f.strip()]
 
 
-def run_retrieval_eval(sample_size: int = 20, n_results: int = 4):
+def run_retrieval_eval(sample_size: int = 20, n_results: int = DEFAULT_N_RESULTS,
+                       expand: bool = False):
     print(f"\n{'='*70}")
     print("RETRIEVAL EVAL — did search find the chunks the brief needs?")
     print(f"{'='*70}\n")
@@ -84,7 +86,13 @@ def run_retrieval_eval(sample_size: int = 20, n_results: int = 4):
     rows, all_misses = [], []
 
     for _, row in df.iterrows():
-        query = derive_research_query(row["campaign_brief"])
+        expansion_usd = 0.0
+        if expand:
+            query, exp_cost = expand_query(row["campaign_brief"])
+            expansion_usd = exp_cost.usd or 0.0
+            print(f"      expanded: {query[:100]}")
+        else:
+            query = derive_research_query(row["campaign_brief"])
         result = retrieve(query, n_results=n_results)
 
         haystack = " ".join(c["text"] for c in result.chunks)
@@ -109,6 +117,7 @@ def run_retrieval_eval(sample_size: int = 20, n_results: int = 4):
             "recall": round(recall, 3),
             "complete": len(missed) == 0,
             "missed_facts": " | ".join(missed),
+            "expansion_usd": expansion_usd,
         })
         if missed:
             all_misses.append((row["id"], row["campaign_brief"], missed, result))
@@ -154,6 +163,11 @@ def run_retrieval_eval(sample_size: int = 20, n_results: int = 4):
                 print(f"      [{c['relevance_score']:.2f}] {first}")
             print(f"  {'-'*66}")
 
+    if "expansion_usd" in results and results["expansion_usd"].sum():
+        tot = results["expansion_usd"].sum()
+        print(f"\n  Query expansion cost: ${tot:.5f} over {len(results)} briefs "
+              f"= ${tot/len(results):.6f} per campaign")
+
     print(f"\n✓ Saved to evals/retrieval_eval.csv\n")
     return results
 
@@ -162,7 +176,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", type=int, default=20)
-    parser.add_argument("--n-results", type=int, default=4,
-                        help="chunks retrieved per query (pipeline default 4)")
+    parser.add_argument("--expand", action="store_true",
+                        help="EXPERIMENT B: expand the brief into search terms first")
+    parser.add_argument("--n-results", type=int, default=DEFAULT_N_RESULTS,
+                        help="chunks retrieved per query (tracks the pipeline default)")
     args = parser.parse_args()
-    run_retrieval_eval(sample_size=args.samples, n_results=args.n_results)
+    run_retrieval_eval(sample_size=args.samples, n_results=args.n_results,
+                       expand=args.expand)

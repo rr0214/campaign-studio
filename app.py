@@ -37,7 +37,7 @@ st.set_page_config(
     page_title="Campaign Studio",
     page_icon="🎯",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # ---------------------------------------------------------------------------
@@ -115,11 +115,60 @@ div[data-testid="stButton"] button[kind="primary"]:hover {
 }
 
 /* inputs: filled, round, borderless */
-textarea, input, div[data-baseweb="input"], div[data-baseweb="textarea"] {
+/* ── Inputs and cards: explicit foreground AND background everywhere ──────
+   Literal hex, not custom properties, and -webkit-text-fill-color alongside
+   colour — that is the one that actually wins on input elements. Without this
+   a dark-mode machine rendered Streamlit's near-white input text onto the white
+   background this stylesheet forces, i.e. invisible typing. The app must not
+   depend on the viewer's OS theme.                                          */
+div[data-baseweb="input"], div[data-baseweb="textarea"],
+div[data-baseweb="base-input"], .stTextInput > div, .stTextArea > div {
     border:none !important; border-radius:18px !important;
-    background:var(--card) !important; box-shadow:0 2px 0 rgba(11,15,13,.06) !important;
-    font-family:'Outfit', sans-serif !important; color:var(--ink) !important;
+    background-color:#FFFFFF !important;
+    box-shadow:0 2px 0 rgba(11,15,13,.06) !important;
 }
+.stTextArea textarea, .stTextInput input, textarea, input[type="text"] {
+    background-color:#FFFFFF !important;
+    color:#0B0F0D !important;
+    -webkit-text-fill-color:#0B0F0D !important;
+    caret-color:#0E3B2E !important;
+    font-family:'Outfit', sans-serif !important;
+    border:none !important;
+}
+.stTextArea textarea::placeholder, .stTextInput input::placeholder {
+    color:#9AA39E !important; -webkit-text-fill-color:#9AA39E !important;
+}
+
+/* expanders — header and body both pinned */
+div[data-testid="stExpander"] summary,
+div[data-testid="stExpander"] summary * { color:#0B0F0D !important; }
+div[data-testid="stExpander"] > div,
+div[data-testid="stExpanderDetails"] {
+    background-color:#FFFFFF !important; color:#3A4440 !important;
+}
+
+/* code blocks and captions */
+/* Streamlit highlights code with Prism, whose token spans carry their own
+   colours chosen for a dark background. Setting colour on the container alone
+   left those spans light-on-light — the prompts reported thousands of chars and
+   rendered as empty blocks. Descendants have to be forced too. */
+.stCode, pre, code, div[data-testid="stCode"] {
+    background-color:#F1EDE6 !important; color:#0B0F0D !important;
+}
+div[data-testid="stCode"] *, .stCode *, pre *, code *, pre span, code span {
+    color:#0B0F0D !important; -webkit-text-fill-color:#0B0F0D !important;
+    background:transparent !important;
+}
+div[data-testid="stCode"] pre, .stCode pre {
+    white-space:pre-wrap !important; word-break:break-word !important;
+}
+div[data-testid="stCaptionContainer"], div[data-testid="stCaptionContainer"] * {
+    color:#6B7671 !important;
+}
+label, .stTextArea label, .stTextInput label, label * { color:#3A4440 !important; }
+
+/* dataframes keep their own chrome — pin the surface they sit on */
+div[data-testid="stDataFrame"] { background-color:#FFFFFF !important; }
 div[data-testid="stExpander"] {
     border:none !important; border-radius:20px; background:var(--card);
     box-shadow:0 2px 0 rgba(11,15,13,.05), 0 10px 26px rgba(11,15,13,.05);
@@ -158,6 +207,19 @@ div[data-testid="stExpander"] details { border:none !important; }
     background:var(--card); border-radius:28px; padding:0 0 30px 0;
     box-shadow:0 3px 0 rgba(11,15,13,.06), 0 22px 54px rgba(11,15,13,.10);
     overflow:hidden; margin-bottom:20px;
+    color:#0B0F0D;
+}
+/* The card split around the video widget: same fill, rounding only on the outer
+   corners, so the seam behind the player is invisible. A single wrapper div is
+   not possible — st.video is a widget, not HTML. */
+.post-top {
+    background:var(--card); color:#0B0F0D; border-radius:28px 28px 0 0;
+    padding:0 0 2px 0; margin-bottom:0;
+}
+.post-bottom {
+    background:var(--card); color:#0B0F0D; border-radius:0 0 28px 28px;
+    padding:2px 30px 26px 30px; margin:0 0 18px 0;
+    box-shadow:0 3px 0 rgba(11,15,13,.06), 0 22px 54px rgba(11,15,13,.10);
 }
 .post-inner { padding:0 30px; }
 .post-head { display:flex; align-items:center; gap:13px; padding:24px 30px 18px 30px; }
@@ -169,6 +231,10 @@ div[data-testid="stExpander"] details { border:none !important; }
 }
 .post-handle { font-size:0.98rem; font-weight:700; color:var(--ink); line-height:1.2; }
 .post-meta   { font-size:0.78rem; color:var(--ink-3); font-weight:500; }
+.post-tagline {
+    font-family:'Bricolage Grotesque', sans-serif; font-size:1.5rem; font-weight:800;
+    color:var(--ink); line-height:1.15; letter-spacing:-0.02em; margin:22px 0 2px 0;
+}
 .post-caption {
     font-family:'Outfit', sans-serif; font-size:1.2rem; line-height:1.62;
     color:var(--ink); margin:26px 0 16px 0; font-weight:400;
@@ -180,17 +246,7 @@ div[data-testid="stExpander"] details { border:none !important; }
 }
 
 /* ── The thinking — oversized display type ─────────────────────────────── */
-.think-block { background:var(--card); border-radius:28px; padding:40px 36px;
-    box-shadow:0 3px 0 rgba(11,15,13,.05), 0 16px 40px rgba(11,15,13,.07); }
-.think-tagline {
-    font-family:'Bricolage Grotesque', sans-serif; font-size:3.4rem; font-weight:800;
-    color:var(--ink); line-height:0.98; letter-spacing:-0.035em; margin:4px 0 22px 0;
-}
-.think-concept { font-size:1.06rem; line-height:1.68; color:var(--ink-2); margin-bottom:26px; }
-.think-msg {
-    font-size:0.98rem; color:var(--ink); line-height:1.55; font-weight:500;
-    background:var(--tint); border-radius:16px; padding:15px 20px; margin-bottom:10px;
-}
+
 
 /* ── Halt walkthrough ──────────────────────────────────────────────────── */
 .seq-step { display:flex; gap:16px; margin-bottom:24px; }
@@ -214,7 +270,8 @@ div[data-testid="stExpander"] details { border:none !important; }
 
 /* ── Receipts ──────────────────────────────────────────────────────────── */
 .receipt { background:var(--card); border-radius:18px; padding:17px 21px; margin-bottom:11px;
-    box-shadow:0 2px 0 rgba(11,15,13,.05); }
+    box-shadow:0 2px 0 rgba(11,15,13,.05);     color:#0B0F0D;
+}
 .receipt-missing { background:#FDF3E0; }
 .receipt-claim { font-size:0.95rem; color:var(--ink); font-weight:600; line-height:1.5; }
 .receipt-src {
@@ -376,6 +433,74 @@ run_btn = st.button(btn_label, type="primary")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+# Step labels for progress and diagnostics. No emoji — Streamlit's own status
+# icons carry the state.
+STEP_UI = {
+    "retrieve":  ("", "Retrieve — querying brand documents (no model call)"),
+    "generate":  ("", "Generate — one model call, structured output"),
+    "verify":    ("", "Verify — deterministic checks, then judge"),
+    "repair":    ("", "Repair — rewriting against the source line"),
+    "re-verify": ("", "Re-verify — checking the repair"),
+    "route":     ("", "Route — publish, flag, or sample"),
+    "assets":    ("", "Assets — generating video"),
+    "audience":  ("", "Audience — simulating reaction to what published"),
+}
+
+
+def _failure_noun(run):
+    return {
+        "UNSUPPORTED_CLAIM": "unsupported claim",
+        "UNAPPROVED_STAT":   "unapproved statistic",
+        "COMPETITOR_NAMED":  "competitor reference",
+        "PROHIBITED_PHRASE": "prohibited claim",
+    }.get(run.failure_type, "flagged claim")
+
+
+def status_state(run):
+    """
+    The review decision, in four unambiguous states.
+
+    Published vs needs-review is the call a reviewer scanning a queue has to make
+    in under a second, so the two published states share cool colours and the two
+    unpublished ones share warm — the grouping reads before the words do.
+
+    Returns (css_class, headline, detail).
+    """
+    receipts = run.routing.receipts if run.routing else []
+    traced = sum(1 for r in receipts if r["source_found"])
+
+    # Checked first: failure_type can now carry a video failure, and the copy-judge
+    # branch below would otherwise claim the copy was never verified.
+    blocked = getattr(run, "video_blocked", None)
+    if blocked is not None:
+        return ("s-review", "Held for review — video blocked",
+                blocked.reason or "The shot was refused by the video guardrail.")
+
+    if run.failure_type == "JUDGE_UNAVAILABLE":
+        return ("s-unknown", "Not published — check unavailable",
+                "The judge errored, so this copy was never verified. Held fail-closed: "
+                "unverified is not the same as clean.")
+    if not run.published:
+        repaired = " couldn't be repaired" if run.repair_attempted else " was flagged"
+        return ("s-review", "Not published — needs review",
+                f"1 {_failure_noun(run)}{repaired}.")
+    if run.routing.sampled:
+        # "Flagged" is reserved for campaigns where a check found something.
+        # Nothing was wrong with this one — it was drawn at random.
+        return ("s-sample", "Published · in 10% audit sample",
+                "Randomly selected for quality review. Already live.")
+
+    n = len(receipts)
+    noun = "claim" if n == 1 else "claims"
+    if receipts and traced == n:
+        detail = f"{n} {noun}, {'traced' if n == 1 else 'all traced'}."
+    elif receipts:
+        detail = f"{n} {noun}, {n - traced} without a source line."
+    else:
+        detail = "No factual claims made."
+    return ("s-live", "Published — no review needed", detail)
+
+
 def render_status(run):
     cls, head, sub = status_state(run)
     chip = {"s-live": "c-live", "s-sample": "c-sample",
@@ -389,59 +514,110 @@ def render_status(run):
 
 def render_post(run):
     """
-    TIER 1 — the post. Laid out as a feed preview, because that is what a
-    marketer is approving: video, caption as running copy, hashtags muted.
-    Not a form of labelled fields.
+    TIER 1 — the post, as a feed preview.
+
+    Streamlit wraps every st.markdown() in its own container, so an opening
+    <div> emitted alone is sealed empty and the content lands outside it. Each
+    emission below is therefore a COMPLETE, self-closing fragment.
+
+    st.video is a real widget and cannot live inside an HTML string, so the card
+    is drawn as two halves — .post-top above the video, .post-bottom below —
+    sharing a fill, with rounding only on their outer corners.
     """
     draft, assets = run.draft, run.assets
+    has_video = bool(assets and assets.video_bytes)
 
-    st.markdown("<div class='post'>", unsafe_allow_html=True)
-    st.markdown(
+    head = (
         "<div class='post-head'><div class='post-avatar'>V</div>"
         "<div><div class='post-handle'>verdant</div>"
-        "<div class='post-meta'>Sponsored · Draft preview</div></div></div>",
+        "<div class='post-meta'>Sponsored · Draft preview</div></div></div>"
+    )
+    body = ""
+    if draft.tagline:
+        body += f"<div class='post-tagline'>{draft.tagline}</div>"
+    if draft.caption:
+        body += f"<div class='post-caption'>{draft.caption}</div>"
+    if draft.hashtags:
+        body += f"<div class='post-tags'>{' '.join(draft.hashtags)}</div>"
+
+    if has_video:
+        st.markdown(f"<div class='post-top'>{head}</div>", unsafe_allow_html=True)
+        st.video(assets.video_bytes)
+        st.markdown(f"<div class='post-bottom'>{body}</div>", unsafe_allow_html=True)
+        return
+
+    if run.video_blocked is not None:
+        note = ("Video blocked by the guardrail — the shot was refused before "
+                "filming. See “The shot we asked for” below.")
+    elif not run.published:
+        note = "No video — the campaign was held, so the asset step never ran."
+    elif assets and assets.error:
+        note = f"Video unavailable — {assets.error[:140]}"
+    else:
+        note = "No video available."
+    st.markdown(
+        f"<div class='post'>{head}<div class='post-empty'>{note}</div>"
+        f"<div class='post-inner'>{body}</div></div>",
         unsafe_allow_html=True,
     )
 
-    if assets and assets.video_bytes:
-        st.video(assets.video_bytes)
-    else:
-        note = ("No video — this campaign was not published, so the asset step never ran."
-                if not run.published else
-                (f"Video unavailable — {assets.error[:140]}" if (assets and assets.error)
-                 else "No video available."))
-        st.markdown(f"<div class='post-empty'>{note}</div>", unsafe_allow_html=True)
 
-    st.markdown("<div class='post-inner'>", unsafe_allow_html=True)
-    if draft.caption:
-        st.markdown(f"<div class='post-caption'>{draft.caption}</div>", unsafe_allow_html=True)
-    if draft.hashtags:
-        st.markdown(f"<div class='post-tags'>{' '.join(draft.hashtags)}</div>",
-                    unsafe_allow_html=True)
-    st.markdown("</div></div>", unsafe_allow_html=True)
-
-
-def render_thinking(run):
+def render_shot(run):
     """
-    TIER 2 — the strategy behind the post. Secondary to the post itself, but it
-    is what a reviewer reads to decide whether the angle is right.
-    """
-    draft = run.draft
-    st.markdown("<div class='tier-gap'></div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-label'>The strategy behind it</div>",
-                unsafe_allow_html=True)
-    st.markdown("<div class='think-block'>", unsafe_allow_html=True)
+    "The shot we asked for" — the description sent to Veo and what the video
+    guardrail made of it.
 
-    if draft.tagline:
-        st.markdown(f"<div class='think-tagline'>{draft.tagline}</div>", unsafe_allow_html=True)
-    if draft.campaign_concept:
-        st.markdown(f"<div class='think-concept'>{draft.campaign_concept}</div>",
-                    unsafe_allow_html=True)
-    if draft.key_messages:
-        st.markdown("<div class='section-label'>Key messages</div>", unsafe_allow_html=True)
-        for msg in draft.key_messages:
-            st.markdown(f"<div class='think-msg'>{msg}</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    Always collapsed, always rendered, whether the video generated or was
+    refused. When it was refused this is the only place a reviewer can see what
+    was actually asked for and why it was stopped.
+    """
+    assets = run.assets
+    prompt = (assets.video_prompt if assets else "") or ""
+    blocked = run.video_blocked
+    leaked = getattr(run, "video_concept_leaked", []) or []
+    if not prompt and not blocked:
+        return
+
+    with st.expander("The shot we asked for", expanded=False):
+        if blocked is not None:
+            layer = {"deterministic": "deterministic check — no model call",
+                     "judge": "visual-claim judge"}.get(blocked.layer, blocked.layer or "—")
+            st.markdown(
+                f"<div style='background:#FDEEE9; color:#7F1D1D; border-radius:14px; "
+                f"padding:14px 18px; margin-bottom:14px; font-size:0.9rem;'>"
+                f"<strong>Blocked — not sent to Veo.</strong><br>"
+                f"Caught by the {layer} · <code>{blocked.failure_type}</code><br><br>"
+                f"{blocked.reason}</div>", unsafe_allow_html=True)
+            if blocked.claim_flagged:
+                # Only the judge has a view about viewers. The deterministic layer
+                # matches strings and knows nothing about what anyone would think.
+                heading = ("What a viewer would have concluded"
+                           if blocked.layer == "judge" else "What the check found")
+                st.markdown(f"<div class='section-label'>{heading}</div>",
+                            unsafe_allow_html=True)
+                st.markdown(f"<div class='seq-text'>{blocked.claim_flagged}</div>",
+                            unsafe_allow_html=True)
+        else:
+            verdict = getattr(run, "video_judge_label", "") or "not called"
+            st.markdown(
+                f"<div style='background:#F1F7F2; color:#14532D; border-radius:14px; "
+                f"padding:12px 18px; margin-bottom:14px; font-size:0.9rem;'>"
+                f"<strong>Passed both guardrail layers.</strong><br>"
+                f"Deterministic checks clear · visual-claim judge: "
+                f"<strong>{verdict}</strong></div>", unsafe_allow_html=True)
+
+        if leaked:
+            st.markdown("<div class='section-label' style='margin-top:14px;'>"
+                        "Concept terms that leaked</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='seq-text'>The shot still used "
+                f"<strong>{', '.join(leaked)}</strong> after a retry, so the generic "
+                f"fallback shot was filmed instead. A video model renders those "
+                f"words as literal objects.</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='section-label' style='margin-top:14px;'>"
+                    "Shot description</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='seq-text'>{prompt}</div>", unsafe_allow_html=True)
 
 
 def render_proof(run):
@@ -450,9 +626,24 @@ def render_proof(run):
     traced = sum(1 for r in receipts if r["source_found"])
     n = len(receipts)
     noun = "claim" if n == 1 else "claims"
-    label = (f"Proof — {n} {noun} traced to source" if receipts and traced == n
-             else f"Proof — {traced} of {n} {noun} traced" if receipts
-             else "Proof — no factual claims made")
+    if receipts:
+        label = (f"Proof — {n} {noun} traced to source" if traced == n
+                 else f"Proof — {traced} of {n} {noun} traced")
+    elif not run.published:
+        # Receipts are only built for copy that publishes. Saying "no factual
+        # claims made" here would be false — the claims exist, they just were
+        # never cleared.
+        label = "Proof — not generated; this campaign was not published"
+    else:
+        label = "Proof — no factual claims made"
+
+    # The rail reports the claim count at GENERATE; receipts are built after
+    # REPAIR may have dropped or rewritten some. Two honest numbers that look
+    # like a contradiction unless the relationship is spelled out.
+    declared = len(run.original_draft.claims) if run.original_draft else None
+    final = len(run.draft.claims)
+    if run.repair_attempted and declared is not None and declared != final:
+        label += f" · {declared} declared → {final} after repair"
     st.markdown("<div class='tier-gap'></div>", unsafe_allow_html=True)
     with st.expander(label, expanded=False):
         render_receipts(run)
@@ -486,13 +677,29 @@ def render_diagnostics(run, step_times=None, heading="Diagnostics"):
             f"{run.cost.total_tokens:,} tokens</span></div>",
             unsafe_allow_html=True,
         )
-        for c in run.cost.steps:
-            amt = c.display_usd()
-            st.markdown(
-                f"<div class='diag-row'><span>{c.step}</span>"
-                f"<span class='t'>{amt}</span></div>", unsafe_allow_html=True)
+        with st.expander("Cost by step", expanded=False):
+            for c in run.cost.steps:
+                st.markdown(
+                    f"<div class='diag-row'><span>{c.step}</span>"
+                    f"<span class='t'>{c.display_usd()}</span></div>",
+                    unsafe_allow_html=True)
         if run.cost.tier_exceeded:
             st.caption("Crossed into the long-context pricing tier — verify the rate.")
+
+        with st.expander("Trust signals", expanded=False):
+            st.code(f"grounding_score: {run.retrieval.grounding_score:.2f}\n"
+                    f"n_chunks: {len(run.retrieval.chunks)}\n"
+                    f"injection_risk: {run.retrieval.metadata['injection_risk'].upper()}\n"
+                    f"layer: {run.check_layer}\n"
+                    f"failure_type: {run.failure_type or 'none'}\n"
+                    f"judge_called: {any(e['judge_called'] for e in run.verify_events)}\n"
+                    f"attempts: {len(run.verify_events)}\n"
+                    f"status: {run.final_status}\n"
+                    f"destination: {run.routing.destination}\n"
+                    f"sampled: {run.routing.sampled}\n"
+                    f"published: {run.published}")
+            st.caption("The grounding score is reported, not gating. It is built from "
+                       "retrieval signals and never sees the generated text.")
         if run.cost.has_unknown:
             st.caption("Some steps report **unknown** cost — usage could not be captured. "
                        "That is not the same as free; the run total is withheld rather "
@@ -502,11 +709,13 @@ def render_diagnostics(run, step_times=None, heading="Diagnostics"):
         # template. Collapsed, because it is long and only wanted when debugging
         # why a particular run came out the way it did.
         if run.prompts:
-            st.markdown("<div class='section-label' style='margin-top:20px;'>"
-                        "Prompts sent</div>", unsafe_allow_html=True)
+            st.markdown("---")
+            st.markdown(f"#### Prompts sent to the model, every step")
+            st.caption(f"Cycle {run.cycle} · {len(run.prompts)} calls · the exact "
+                       f"rendered text, not the template")
             for i, pr in enumerate(run.prompts):
                 chars = len(pr["text"])
-                with st.expander(f"{pr['step']} · {chars:,} chars", expanded=False):
+                with st.expander(f"{i+1}. {pr['step']} · {chars:,} chars", expanded=False):
                     st.caption(f"model: {pr['model']}")
                     st.code(pr["text"], language=None)
             joined = "\n\n".join(
@@ -520,6 +729,25 @@ def render_diagnostics(run, step_times=None, heading="Diagnostics"):
                 mime="text/plain",
                 key=f"dl_prompts_{run.span_id}_{run.cycle}",
             )
+
+
+def _highlight(text, claim):
+    """
+    Mark the offending fragment inside the draft, so a reviewer sees the claim in
+    place rather than quoted separately.
+    """
+    import html as _html
+    safe = _html.escape(text or "")
+    frag = (claim or "").strip()
+    # UNAPPROVED_STAT flags arrive as '100% — "…context…"'; the number is the part
+    # that actually appears in the copy.
+    if "—" in frag:
+        frag = frag.split("—")[0].strip()
+    frag = frag.strip('"\u201c\u201d')
+    if frag and len(frag) < 80 and _html.escape(frag) in safe:
+        safe = safe.replace(_html.escape(frag),
+                            f"<span class='claim-hl'>{_html.escape(frag)}</span>", 1)
+    return safe
 
 
 def render_halt_sequence(run):
@@ -581,8 +809,6 @@ def render_halt_sequence(run):
     )
 
 
-
-
 def render_receipts(run):
     """Each factual claim, green, with the source line that supports it."""
     receipts = run.routing.receipts if run.routing else []
@@ -623,11 +849,16 @@ def render_result(run, step_times=None, heading="Diagnostics"):
     different products from the same pipeline; there is only one now.
 
       1. the post        what publishes, laid out as a feed preview
-      2. the thinking    the strategy a reviewer judges the angle by
-      3. the proof       receipts, collapsed
-      4. diagnostics     steps and cost, in the sidebar
+      2. the proof       receipts, collapsed
+      3. diagnostics     steps and cost, in the sidebar
+
+    campaign_concept and key_messages are NOT displayed. Both still feed
+    verified_text() into the guardrail and carry into the next cycle's brief —
+    checked, not shown. A reviewer judges the angle from the caption, which is
+    what actually publishes.
     """
     render_post(run)
+    render_shot(run)
     render_status(run)
 
     if not run.published:
@@ -636,7 +867,6 @@ def render_result(run, step_times=None, heading="Diagnostics"):
             render_halt_sequence(run)
         render_recommended_action(run)
 
-    render_thinking(run)
     render_proof(run)
     render_diagnostics(run, step_times, heading)
     st.markdown("<div class='tier-gap'></div>", unsafe_allow_html=True)
@@ -692,19 +922,39 @@ def run_with_progress(brief, config, cycle=1, audience_comments=None,
 
     blocks, started, step_times, clock = {}, [], [], {}
 
+    # Live progress belongs in the main body. It used to go only to the sidebar
+    # panel, which ships collapsed — so a 60-second run looked like nothing was
+    # happening at all.
+    expected = 6 if generate_assets else 4          # retrieve, generate, verify, route (+assets, +audience)
+    # The rail lives in a placeholder so it can be replaced by a one-line summary
+    # once the run finishes. Live it is the only sign anything is happening; after
+    # the fact it is seven lines of history above the thing you came to look at.
+    rail = st.empty()
+    rail_box = rail.container()
+    with rail_box:
+        bar = st.progress(0.0, text="Starting…")
+    done_count = {"n": 0}
+
     def progress(step, state, detail):
         icon, label = STEP_UI.get(step, ("•", step))
+        name = label.split(" — ")[0]
         if state == "start":
             clock[step] = time.time()
-            blocks[step] = st.status(f"{label}", expanded=False)
+            bar.progress(min(done_count["n"] / expected, 0.95),
+                         text=f"Step {len(started) + 1} · {name}…")
+            with rail_box:
+                blocks[step] = st.status(f"{label}", expanded=False)
             started.append(step)
             if status_slot is not None:
-                status_slot.markdown(f"**{label.split(' — ')[0]}**")
+                status_slot.markdown(f"**{name}**")
             return
 
         block = blocks.get(step)
         elapsed = time.time() - clock.get(step, time.time())
         step_times.append((step, elapsed))
+        done_count["n"] += 1
+        bar.progress(min(done_count["n"] / expected, 0.95),
+                     text=f"{name} done · {elapsed:.0f}s")
         if block is None:
             return
         if step == "retrieve":
@@ -725,7 +975,7 @@ def run_with_progress(brief, config, cycle=1, audience_comments=None,
             block.update(label=f"Repair written — re-checking · {elapsed:.1f}s", state="complete")
         elif step == "route":
             block.update(label=f"Routed → {detail['destination']}"
-                               + (" (random audit sample)" if detail["sampled"] else "")
+                               + (" · in 10% audit sample" if detail["sampled"] else "")
                                + f" · {elapsed:.1f}s", state="complete")
         elif step == "audience":
             block.update(label=f"Audience — {detail['n']} comments · {elapsed:.1f}s",
@@ -748,6 +998,19 @@ def run_with_progress(brief, config, cycle=1, audience_comments=None,
         progress=progress,
         source=SOURCE_APP,
     )
+    total = sum(sec for _, sec in step_times)
+    bar.progress(1.0, text=f"Done · {len(step_times)} steps · {total:.0f}s")
+
+    # Replace the live rail with a single collapsed row.
+    rail.empty()
+    with rail.container():
+        with st.expander(f"Done · {len(step_times)} steps · {total:.0f}s", expanded=False):
+            for step, secs in step_times:
+                _, lbl = STEP_UI.get(step, ("", step))
+                st.markdown(f"<div class='diag-row'><span class='dot dot-ok'></span>"
+                            f"<span>{lbl.split(' — ')[0]}</span>"
+                            f"<span class='t'>{secs:.1f}s</span></div>",
+                            unsafe_allow_html=True)
     return result, step_times
 
 
@@ -826,21 +1089,17 @@ if run_btn and user_prompt.strip():
             render_result(run, _step_times, heading=f"Campaign {i+1} diagnostics")
 
             if comments and i < num_campaigns - 1:
-                comment_html = "".join(
-                    f"<div style='font-size:0.85rem; color:#374151; line-height:1.6;'>“{c}”</div>"
-                    for c in comments
-                )
-                st.markdown(f"""
-                <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px 16px; margin:10px 0;'>
-                    <div style='font-size:0.72rem; font-weight:700; letter-spacing:0.07em; text-transform:uppercase; color:var(--ink-3); margin-bottom:8px;'>
-                        💬 Audience comments — {drop_dates[i].strftime('%b %d')}
-                    </div>
-                    {comment_html}
-                    <div style='font-size:0.78rem; color:var(--ink-3); margin-top:8px;'>
-                        Carried into the next brief alongside this campaign's approved copy. Brand facts are re-retrieved from source.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                with st.expander(
+                    f"Audience comments — {drop_dates[i].strftime('%b %d')} "
+                    f"({len(comments)})", expanded=False):
+                    for c in comments:
+                        st.markdown(
+                            f"<div style='font-size:0.9rem; color:var(--ink-2); "
+                            f"line-height:1.65; padding:4px 0;'>“{c}”</div>",
+                            unsafe_allow_html=True)
+                    st.caption("Simulated. Carried into the next brief alongside this "
+                               "campaign's approved copy. Brand facts are re-retrieved "
+                               "from source every cycle.")
 
             if approved:
                 campaign_history.append({
@@ -862,50 +1121,6 @@ if run_btn and user_prompt.strip():
         series_status.empty()
 
         st.markdown("<div class='tier-gap'></div>", unsafe_allow_html=True)
-        st.markdown("<div class='section-label'>Did it learn?</div>", unsafe_allow_html=True)
-
-        needed = [c["corrections_needed"] for c in completed]
-        total_corrections = sum(needed)
-        first_half = needed[: max(1, len(needed) // 2)]
-        second_half = needed[max(1, len(needed) // 2):]
-
-        if len(completed) < 2:
-            verdict = "A single campaign cannot show a trend."
-        elif total_corrections == 0:
-            verdict = ("No campaign in this series needed a correction. Nothing to learn "
-                       "from, which is the good outcome.")
-        elif second_half and sum(second_half) < sum(first_half):
-            verdict = (f"Corrections fell from {sum(first_half)} in the first half of the "
-                       f"series to {sum(second_half)} in the second. Each cycle inherits "
-                       f"every earlier correction with the source line behind it, so this "
-                       f"is the system carrying its mistakes forward rather than "
-                       f"relearning them.")
-        elif second_half and sum(second_half) > sum(first_half):
-            verdict = (f"Corrections rose from {sum(first_half)} to {sum(second_half)}. "
-                       f"The carried-forward corrections are not holding — worth reading "
-                       f"the flagged claims below to see whether they are the same kind "
-                       f"of mistake or new ones.")
-        else:
-            verdict = (f"{total_corrections} correction(s) across {len(completed)} "
-                       f"campaigns, flat across the series.")
-
-        cols = st.columns(len(completed))
-        for col, c in zip(cols, completed):
-            r = c["run"]
-            n_fix = c["corrections_needed"]
-            tone = "c-live" if n_fix == 0 else "c-review"
-            word = "clean" if n_fix == 0 else f"{n_fix} correction"
-            col.markdown(
-                f"<div style='text-align:center;'>"
-                f"<div class='section-label' style='margin-bottom:8px;'>Cycle {c['n']}</div>"
-                f"<div class='chip {tone}' style='font-size:0.85rem; padding:9px 16px;'>{word}</div>"
-                f"<div style='font-size:0.76rem; color:var(--ink-3); margin-top:10px;'>"
-                f"inherited {c['inherited']}</div></div>",
-                unsafe_allow_html=True,
-            )
-        st.markdown(f"<div class='chip-sub' style='margin-top:18px;'>{verdict}</div>",
-                    unsafe_allow_html=True)
-
         if series_corrections:
             with st.expander(f"Corrections carried forward — {len(series_corrections)}",
                              expanded=False):
@@ -971,28 +1186,6 @@ if run_btn and user_prompt.strip():
         st.divider()
 
         render_result(run, step_times)
-
-        with st.expander("Trust signals", expanded=False):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown("**Retrieve**")
-                st.code(f"grounding_score: {run.retrieval.grounding_score:.2f}\n"
-                        f"n_chunks: {len(run.retrieval.chunks)}\n"
-                        f"injection_risk: {run.retrieval.metadata['injection_risk'].upper()}")
-            with c2:
-                st.markdown("**Verify**")
-                st.code(f"layer: {run.check_layer}\n"
-                        f"failure_type: {run.failure_type or 'none'}\n"
-                        f"judge_called: {any(e['judge_called'] for e in run.verify_events)}\n"
-                        f"attempts: {len(run.verify_events)}")
-            with c3:
-                st.markdown("**Route**")
-                st.code(f"status: {run.final_status}\n"
-                        f"destination: {run.routing.destination}\n"
-                        f"sampled: {run.routing.sampled}\n"
-                        f"published: {run.published}")
-            st.caption("The grounding score is reported, not gating. It is built from retrieval "
-                       "signals and never sees the generated text — Verify reads the text instead.")
 
 elif run_btn and not user_prompt.strip():
     st.warning("Please describe your campaign before generating.")

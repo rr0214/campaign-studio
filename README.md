@@ -45,7 +45,9 @@ The retrieval-quality score is **reported, not gating**. It is built from retrie
 
 **Routing and the audit sample.** A flagged campaign goes to a human and does not publish. A passing campaign publishes — *including when it is sampled*. Sampling audits what normally happens, so a sampled item takes the normal path and the review copy goes out in parallel. Holding 10% of approved content back would create a second behaviour and mean observing that instead.
 
-**Cost.** Every step's token usage is measured and priced; `cost.step_tokens` / `cost.step_usd` sit on each span and the total on the root, so cost per campaign is visible broken down by step. A clean run is roughly 5,000 tokens and $0.003; one that repairs is nearer 8,000 and $0.004.
+**Cost.** Every step's token usage is measured and priced; `cost.step_tokens` / `cost.step_usd` sit on each span and the total on the root, so cost per campaign is visible broken down by step. A clean run is roughly 7,000 tokens and $0.0035; one that repairs is nearer 8,500 and $0.0042.
+
+Going from top-4 to top-8 roughly doubled the retrieved source text (1,838 → 3,876 chars, about +510 tokens), which is carried by both the generate prompt and the judge prompt. That is about **+$0.0005 per judge call** and +$0.00005 per generate call — worst case around **+$0.0011 per campaign**. Observed end-to-end mean over three fixed briefs went $0.00255 → $0.00343, though that comparison is noisy: all three of the top-8 runs were caught by the deterministic layer, so the judge never ran.
 
 Each step resolves to one of three states, and the last two are never collapsed:
 
@@ -65,7 +67,16 @@ python3 -m evals.eval_end_to_end    # Does the pipeline publish anything bad?
 python3 -m evals.eval_judge         # Does the judge agree with a fixed label?
 ```
 
-**Retrieval eval** — deterministic, no judge, costs a fraction of a cent. Checks whether the facts a brief needs are actually in the retrieved chunks, using the golden dataset's `ground_truth_answer_contains` as ground truth. Current result: **70% mean fact recall @4, 9 of 20 briefs missing at least one required fact — while all 20 scored "high" grounding.** That gap is the whole argument for not gating on the grounding score.
+**Retrieval eval** — deterministic, no judge, costs a fraction of a cent. Checks whether the facts a brief needs are actually in the retrieved chunks, using the golden dataset's `ground_truth_answer_contains` as ground truth.
+
+| | mean fact recall | briefs missing a fact | incomplete *while scoring "high"* |
+|---|---|---|---|
+| **top-4** (until 2026-09-20) | 70.0% | 9 / 20 | 9 |
+| **top-8** (current) | **90.0%** | **3 / 20** | **2** |
+
+Measured with chunk size 600 and the same query template in both runs; `n_results` was the only variable. Raising it to 8 recovered 20 points of recall and cut incomplete briefs by two thirds.
+
+**The finding survives the fix.** Two briefs still miss a required fact while the grounding score calls them "high" — id 6 at 0.72 (missing the 45,000 Take Back figure) and id 16 at 0.72 (missing the Watershed Jacket's `100% recycled nylon shell`). More retrieval made the gap smaller, not absent: the score still measures whether search found something relevant-looking, not whether it found what the brief needs. That is the argument for not gating on it.
 
 **End-to-end eval** — runs the real pipeline. The number that matters is **escapes**: campaigns routed to publish that still contain a claim the brief's row lists as prohibited. Its inputs move whenever the generator changes, so it is a snapshot, not a measurement.
 

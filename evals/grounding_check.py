@@ -105,12 +105,42 @@ def _is_excluded(token: str, value: float) -> bool:
     return False
 
 
-def check_unapproved_stat(text: str) -> Optional[tuple[str, str]]:
-    """Return (offending_number, surrounding_text) for the first unapproved stat."""
+# Units that make a number a camera setting rather than a brand claim. Applied
+# ONLY to shot descriptions: "35mm lens", "24fps", "f/2.8", "5-second" are
+# cinematography, and flagging them blocked every video that was ever generated.
+# A bare number in a shot — "400 reclaimed bottles" — is still a claim and is
+# still flagged.
+_MEASUREMENT_AFTER = re.compile(
+    r"""\s?(mm|cm|m\b|ft\b|foot|feet|in\b|inch|inches|fps|hz|khz|k\b|
+        s\b|sec\b|secs\b|second|seconds|min\b|minute|minutes|
+        deg\b|degree|degrees|°|x\b|:\d|/\d|stop|stops|mph|kph)""",
+    re.IGNORECASE | re.VERBOSE,
+)
+# "f/2.8", "t/1.4" — the aperture marker sits before the number.
+_MEASUREMENT_BEFORE = re.compile(r"[ft]/$", re.IGNORECASE)
+
+
+def _is_measurement(text: str, match) -> bool:
+    """Is this number a camera setting rather than a claim about the brand?"""
+    if _MEASUREMENT_BEFORE.search(text[max(0, match.start() - 2):match.start()]):
+        return True
+    return bool(_MEASUREMENT_AFTER.match(text[match.end():match.end() + 9]))
+
+
+def check_unapproved_stat(text: str,
+                          ignore_measurements: bool = False) -> Optional[tuple[str, str]]:
+    """
+    Return (offending_number, surrounding_text) for the first unapproved stat.
+
+    `ignore_measurements` is set only on the shot-description path. The copy path
+    is unchanged: a measurement unit in campaign copy is still a claim.
+    """
     for match in _NUMBER_RE.finditer(text or ""):
         token = match.group()
         value = _normalize(token)
         if value is None or _is_excluded(token, value):
+            continue
+        if ignore_measurements and _is_measurement(text, match):
             continue
         if value not in APPROVED_STATS:
             start = max(0, match.start() - 45)
@@ -179,6 +209,57 @@ Respond with exactly one word, then one sentence naming the specific claim.
 
 Label: """
 
+# ---------------------------------------------------------------------------
+# The visual-claim judge
+# ---------------------------------------------------------------------------
+# A separate question from the text judge. Copy is judged on what it says; a shot
+# is judged on what a viewer would conclude from seeing it. An image can assert
+# something no sentence in the campaign ever claimed — a roof covered in solar
+# panels reads as "we run on solar" even when the words were careful.
+#
+# Version-controlled for the same reason as the text judge: the judge we validate
+# has to be the judge that ships. Changing this invalidates
+# evals/video_judge_eval_results.csv.
+VIDEO_JUDGE_TEMPLATE = """You are checking whether a planned camera shot would make a viewer
+believe something the brand's source documents do not support.
+
+SOURCE DOCUMENTS (everything the system retrieved):
+{sources}
+
+THE SHOT AS IT WILL BE FILMED:
+{shot}
+
+Judge WHAT THE IMAGE ASSERTS, not what any words say. A shot makes a claim when
+an ordinary viewer would walk away believing something specific about the brand.
+
+A shot is UNSUPPORTED if any of these is true:
+- What it depicts implies more than the sources state.
+  Example: "a rooftop blanketed in solar panels" asserts the factory runs on
+  solar. The sources say solar is 68% of factory electricity. UNSUPPORTED.
+- It depicts a certification, award, label or seal the sources do not confirm.
+- It depicts scale, completeness or totality the sources qualify — every
+  garment, the whole supply chain, all factories, zero waste.
+- It stages a process the sources do not describe, in a way a viewer would read
+  as documentary rather than suggestive.
+
+A shot is SUPPORTED when it shows concrete physical things — fabric, hands,
+light, movement, a garment being worn or returned — without implying a fact
+about the brand beyond what the documents say. Atmosphere, mood and beauty are
+not claims. Being aspirational is not the same as asserting something false.
+
+When genuinely uncertain, answer "unsupported". A misleading image is harder to
+retract than a sentence.
+
+Respond with exactly one word, then one sentence naming what the viewer would
+wrongly conclude.
+
+- "supported"   — the shot asserts nothing the sources fail to support
+- "unsupported" — a viewer would conclude something unsupported
+
+Label: """
+
+VIDEO_JUDGE_RAILS = ["supported", "unsupported"]
+
 JUDGE_RAILS = ["supported", "unsupported"]
 
 # The judge runs on a different model from the agents, deliberately: a judge that
@@ -208,21 +289,7 @@ def format_sources(retrieved_chunks) -> str:
     return "\n\n---\n\n".join(parts) if parts else "(no documents retrieved)"
 
 
-def campaign_text_for_check(strategy) -> str:
-    """
-    The publishable copy: tagline, concept, key messages. Any list of rejected
-    claims is deliberately excluded — it quotes what was already caught, and
-    scanning it would halt campaigns that correctly caught their own problems.
-    """
-    parts = [
-        strategy.tagline or "",
-        strategy.campaign_concept or "",
-        " ".join(strategy.key_messages or []),
-    ]
-    return "\n".join(p for p in parts if p.strip()).strip()
-
-
-def _judge_rows_classic(rows, model=None):
+def _judge_rows_classic(rows, model=None, template=None):
     """phoenix[evals] <= 11: llm_classify + OpenAIModel."""
     import pandas as pd
     from phoenix.evals import OpenAIModel, llm_classify
@@ -230,7 +297,7 @@ def _judge_rows_classic(rows, model=None):
     df = pd.DataFrame(rows)
     result = llm_classify(
         dataframe=df,
-        template=GROUNDING_JUDGE_TEMPLATE,
+        template=template or GROUNDING_JUDGE_TEMPLATE,
         model=model or OpenAIModel(model=JUDGE_MODEL),
         rails=JUDGE_RAILS,
         provide_explanation=True,
@@ -243,7 +310,7 @@ def _judge_rows_classic(rows, model=None):
     return list(zip(result["label"].tolist(), [e or "" for e in explanations]))
 
 
-def _judge_rows_modern(rows, model=None):
+def _judge_rows_modern(rows, model=None, template=None):
     """
     phoenix[evals] >= 20: llm_classify and OpenAIModel were removed in favour of
     ClassificationEvaluator. Same contract — same prompt, same two rails, same
@@ -255,7 +322,7 @@ def _judge_rows_modern(rows, model=None):
     evaluator = ClassificationEvaluator(
         name="claim_grounding",
         llm=model or LLM(provider="openai", model=JUDGE_MODEL),
-        prompt_template=GROUNDING_JUDGE_TEMPLATE,
+        prompt_template=template or GROUNDING_JUDGE_TEMPLATE,
         choices=JUDGE_RAILS,
         include_explanation=True,
     )
@@ -268,16 +335,17 @@ def _judge_rows_modern(rows, model=None):
     return judged
 
 
-def judge_rows(rows, model=None):
+def judge_rows(rows, model=None, template=None):
     """
-    Classify a batch of {"sources", "output"} dicts.
+    Classify a batch of dicts against a judge template.
+    Defaults to the text judge; pass VIDEO_JUDGE_TEMPLATE for the visual one.
     Returns [(label, explanation), ...] in input order.
     """
     try:
         from phoenix.evals import llm_classify  # noqa: F401
     except ImportError:
-        return _judge_rows_modern(rows, model)
-    return _judge_rows_classic(rows, model)
+        return _judge_rows_modern(rows, model, template)
+    return _judge_rows_classic(rows, model, template)
 
 
 def run_judge(output_text: str, sources_text: str, model=None) -> tuple[str, str]:
@@ -367,70 +435,84 @@ class GroundingCheckResult:
     judge_explanation: str = ""
 
 
+SUBJECT_COPY = "copy"
+SUBJECT_VIDEO = "video"
+
+# One implementation of the checks; only the wording of the reason changes.
+# The same statistic check runs over campaign copy and over the shot description
+# sent to Veo, and "Pipeline halted: campaign text…" is wrong on both counts for
+# a video block — the pipeline did not halt (the copy published) and it was not
+# campaign text.
+_SUBJECT_WORDING = {
+    SUBJECT_COPY: {
+        "event": "Campaign halted",
+        "noun": "campaign text",
+        "tail": "No creative assets were generated.",
+    },
+    SUBJECT_VIDEO: {
+        "event": "Video blocked",
+        "noun": "the shot description",
+        "tail": "The copy was verified separately and still publishes.",
+    },
+}
+
+
 def run_deterministic_checks(
     text: str,
     upstream_hallucination_flag: bool = False,
+    subject: str = SUBJECT_COPY,
 ) -> Optional[GroundingCheckResult]:
-    """Layer 1. Returns a failing result, or None if all checks pass."""
+    """
+    Layer 1. Returns a failing result, or None if all checks pass.
+
+    `subject` selects wording only — which text was checked and what happened as
+    a result. The checks themselves are identical for copy and for video.
+    """
+    words = _SUBJECT_WORDING.get(subject, _SUBJECT_WORDING[SUBJECT_COPY])
+    event, noun, tail = words["event"], words["noun"], words["tail"]
+
     # 1a — prohibited phrase (reuses the shared policy check unchanged)
     policy = check_brand_policy(text)
     if policy["status"] == "PROHIBITED":
         phrase = re.search(r"'([^']+)'", policy["reason"])
         flagged = phrase.group(1) if phrase else text[:120]
         return GroundingCheckResult(
-            passed=False,
-            layer=LAYER_DETERMINISTIC,
-            failure_type=PROHIBITED_PHRASE,
+            passed=False, layer=LAYER_DETERMINISTIC, failure_type=PROHIBITED_PHRASE,
             claim_flagged=flagged,
-            reason=(
-                f'Pipeline halted: campaign text contains the prohibited claim "{flagged}". '
-                "This is not a verified Verdant brand claim. No creative assets were generated."
-            ),
+            reason=(f'{event}: {noun} contains the prohibited claim "{flagged}". '
+                    f"This is not a verified Verdant brand claim. {tail}"),
         )
 
-    # 1b — unapproved statistic
-    stat = check_unapproved_stat(text)
+    # 1b — unapproved statistic. Camera settings are ignored on the shot path only.
+    stat = check_unapproved_stat(text, ignore_measurements=(subject == SUBJECT_VIDEO))
     if stat:
         number, context = stat
         return GroundingCheckResult(
-            passed=False,
-            layer=LAYER_DETERMINISTIC,
-            failure_type=UNAPPROVED_STAT,
-            claim_flagged=f"{number} — “…{context}…”",
-            reason=(
-                f'Pipeline halted: campaign text cites the statistic "{number}", which is not in '
-                f'Verdant\'s approved statistics. Context: "…{context}…". '
-                "Verify the figure against the brand guide or remove it."
-            ),
+            passed=False, layer=LAYER_DETERMINISTIC, failure_type=UNAPPROVED_STAT,
+            claim_flagged=f"{number} — \u201c…{context}…\u201d",
+            reason=(f'{event}: {noun} cites the statistic "{number}", which is not in '
+                    f"Verdant's approved statistics. Context: \u201c…{context}…\u201d. "
+                    "Verify the figure against the brand guide or remove it."),
         )
 
     # 1c — competitor named
     competitor = check_competitor_named(text)
     if competitor:
         return GroundingCheckResult(
-            passed=False,
-            layer=LAYER_DETERMINISTIC,
-            failure_type=COMPETITOR_NAMED,
+            passed=False, layer=LAYER_DETERMINISTIC, failure_type=COMPETITOR_NAMED,
             claim_flagged=competitor,
-            reason=(
-                f'Pipeline halted: campaign text names the competitor "{competitor}". '
-                "The brand guide prohibits direct comparison to competitors by name."
-            ),
+            reason=(f'{event}: {noun} names the competitor "{competitor}". '
+                    "The brand guide prohibits direct comparison to competitors by name."),
         )
 
     # The generator-side prohibited-phrase heuristic catches a few strings the
-    # policy tool does not ("all manufacturing is fair trade", "switch to"). Free
-    # signal, so it belongs in layer 1 rather than after a judge call.
+    # policy tool does not ("all manufacturing is fair trade", "switch to").
     if upstream_hallucination_flag:
         return GroundingCheckResult(
-            passed=False,
-            layer=LAYER_DETERMINISTIC,
-            failure_type=PROHIBITED_PHRASE,
+            passed=False, layer=LAYER_DETERMINISTIC, failure_type=PROHIBITED_PHRASE,
             claim_flagged=text[:200],
-            reason=(
-                "Pipeline halted: prohibited brand claims were flagged in this campaign "
-                "strategy. No creative assets were generated from unverified content."
-            ),
+            reason=(f"{event}: prohibited brand claims were flagged in this campaign "
+                    f"strategy. {tail}"),
         )
 
     return None
@@ -550,3 +632,15 @@ def run_grounding_check(
         judge_label=label,
         judge_explanation=explanation,
     )
+
+
+def judge_video_shot(shot: str, sources, model=None) -> tuple[str, str]:
+    """
+    LAYER 2 of the video guardrail. Returns (label, explanation).
+    Raises if the judge cannot run — the caller fails closed, as the text path does.
+    """
+    return judge_rows(
+        [{"sources": format_sources(sources), "shot": shot}],
+        model=model,
+        template=VIDEO_JUDGE_TEMPLATE,
+    )[0]
