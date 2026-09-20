@@ -59,24 +59,38 @@ An unknown step withholds the run total rather than under-reporting it, and the 
 
 ## Evals
 
-Three scripts, three different questions. They were one script; that was the problem.
+Four scripts, four different questions. They were one script; that was the problem.
 
 ```bash
-python3 -m evals.eval_retrieval     # Did search find the right chunks?
-python3 -m evals.eval_end_to_end    # Does the pipeline publish anything bad?
-python3 -m evals.eval_judge         # Does the judge agree with a fixed label?
+python3 -m evals.eval_retrieval      # Did search find the right chunks?
+python3 -m evals.eval_end_to_end     # Does the pipeline publish anything bad?
+python3 -m evals.eval_judge          # Does the text judge agree with a fixed label?
+python3 -m evals.eval_video_judge    # Does the video judge agree with a fixed label?
+python3 -m evals.eval_video_judge --repeat 5   # …and does it say the same thing twice?
 ```
 
 **Retrieval eval** — deterministic, no judge, costs a fraction of a cent. Checks whether the facts a brief needs are actually in the retrieved chunks, using the golden dataset's `ground_truth_answer_contains` as ground truth.
 
-| | mean fact recall | briefs missing a fact | incomplete *while scoring "high"* |
-|---|---|---|---|
-| **top-4** (until 2026-09-20) | 70.0% | 9 / 20 | 9 |
-| **top-8** (current) | **90.0%** | **3 / 20** | **2** |
+Four configurations, measured one variable at a time. Chunk size 600 throughout.
 
-Measured with chunk size 600 and the same query template in both runs; `n_results` was the only variable. Raising it to 8 recovered 20 points of recall and cut incomplete briefs by two thirds.
+| config | mean recall | briefs incomplete | mean grounding | scored "high" | **"high" AND incomplete** |
+|---|---|---|---|---|---|
+| top-4, query template *(until 2026-09-20)* | 70.0% | 9 / 20 | — | 20 / 20 | **9** |
+| **top-8, query template** *(current)* | **90.0%** | **3 / 20** | 0.760 | 15 / 20 | **2** |
+| top-8, bare brief as query | 91.2% | 3 / 20 | 0.524 | 2 / 20 | **0** |
+| top-8, LLM query expansion | 87.5% | 4 / 20 | 0.844 | 19 / 20 | **4** |
 
-**The finding survives the fix.** Two briefs still miss a required fact while the grounding score calls them "high" — id 6 at 0.72 (missing the 45,000 Take Back figure) and id 16 at 0.72 (missing the Watershed Jacket's `100% recycled nylon shell`). More retrieval made the gap smaller, not absent: the score still measures whether search found something relevant-looking, not whether it found what the brief needs. That is the argument for not gating on it.
+Raising `n_results` from 4 to 8 recovered 20 points of recall and cut incomplete briefs by two thirds. The other two rows are the interesting ones.
+
+**The bare brief's zero is an artefact, not a fix.** It retrieves marginally better, but mean grounding collapses from 0.760 to 0.524 and only 2 of 20 briefs clear the "high" threshold at all. The same three briefs still miss facts — they now score 0.46 instead of 0.72. Nothing is *eligible* to be high-and-incomplete. The metric didn't improve; its denominator vanished.
+
+**Query expansion is the clearest evidence the score cannot gate anything.** Only the phrasing of the query changed — same documents, same chunking, same index. Mean grounding rose **0.524 → 0.844** and "high" briefs went 2 → 19, while **recall fell** 91.2% → 87.5% and high-and-incomplete *doubled* to 4.
+
+Expansion works by making the query look more like the documents — material names, section headings, product nouns — so cosine similarity rises because the *query* moved, not because the right passages were found. **The score went up 0.32 while retrieval got worse.** A number that can be inflated by rewording the question, with the corpus untouched, cannot be used to decide whether a campaign is safe to publish. It is reported, never gating; `VERIFY` reads the generated text against the retrieved chunks instead.
+
+Expansion also has a shape to its failure: it helps product and material briefs and actively harms brand-voice ones. *"Brand voice compliance review"* expanded to product vocabulary and lost the tone-prohibition passages entirely — 0% recall at 0.88 grounding. Cost was $0.000136 per campaign, one cheap call, for negative recall.
+
+**The finding survives every config.** In the shipping configuration two briefs still miss a required fact while scoring "high": id 6 at 0.72 (missing the 45,000 Take Back figure) and id 16 at 0.72 (missing the Watershed Jacket's `100% recycled nylon shell`, at **0% recall**). More retrieval made the gap smaller, never absent.
 
 **End-to-end eval** — runs the real pipeline. The number that matters is **escapes**: campaigns routed to publish that still contain a claim the brief's row lists as prohibited. Its inputs move whenever the generator changes, so it is a snapshot, not a measurement.
 
@@ -123,6 +137,28 @@ Two things the video model gets wrong unless you stop it, both handled in `build
 **It produces states, not shots.** "Someone running" has no beat. Every prompt is built as subject + the product clearly in frame + *the turn* + camera + light, with the turn mandatory — something released, revealed, or handed on inside the five seconds. `has_turn()` checks for it and retries once if it is missing.
 
 That ban list is **video-only**. The copy prompt opens with "a sustainable activewear brand" and that is correct; the asymmetry is documented in both files so nobody reconciles it later.
+
+### The video guardrail
+
+The shot description is checked before a frame is generated, in the same two-layer shape as the copy guardrail. A refused shot **holds the whole campaign** — the copy does not ship on its own.
+
+**Layer 1 — deterministic, no model call.** The same checks the copy goes through, run over the shot description: prohibited phrases, statistics outside the approved set, competitor names. One implementation, shared; only the wording of the failure differs, so a blocked shot says *"Video blocked: the shot description cites…"* rather than describing a halted campaign.
+
+One exception applies to shots only: numbers attached to a measurement unit are ignored. `35mm`, `24fps`, `f/2.8`, `5 seconds` are cinematography, not brand claims, and flagging them blocked every video the system ever tried to make. A bare number in a shot — *"a wall of 400 reclaimed bottles"* — is still a claim and is still flagged.
+
+**Layer 2 — the visual-claim judge**, on shots that pass layer 1. It asks a different question from the text judge: copy is judged on what it says, a shot on what a viewer would conclude from seeing it. A rooftop blanketed in solar panels asserts the factory runs on solar; the sources say 68% of factory *electricity*. `VIDEO_JUDGE_TEMPLATE` is version-controlled next to the text judge.
+
+It runs on `gpt-5.6-terra` — **a different model from the `gpt-5.6-luna` generator**, so the checker does not inherit the writer's blind spots.
+
+Both layers **fail closed**: a trip, or a judge that cannot run, blocks generation.
+
+### The video judge is measured, and it is not stable
+
+Five hand-labelled shots in `data/video_judge_eval_set.csv`. Current result: **2 of 5 agreement with the labels** — and repeated runs over the *same* shots produce *different verdicts*.
+
+`--repeat 5` measured that directly, without reading labels: **3 of 5 cases fully stable, 92% mean consistency**, with two cases flipping between `supported` and `unsupported` across identical inputs. The judge cannot be pinned to temperature 0 — `gpt-5.6-terra` accepts only its default — so some variance is expected, but not this much.
+
+Treat the video judge as an early signal, not a gate you would trust unattended. The deterministic layer beneath it is not affected: it is string matching and returns the same answer every time.
 
 ## Demo Scenarios
 
@@ -198,8 +234,9 @@ campaign-studio/
 │   ├── grounding_check.py              # Deterministic checks + the judge. The guardrail itself.
 │   ├── eval_retrieval.py               # Did search find the right chunks? Deterministic.
 │   ├── eval_end_to_end.py              # Does the pipeline publish anything bad? Escapes.
-│   ├── eval_judge.py                   # Does the judge agree with fixed labels? Frozen text.
-│   └── run_evals.py                    # Deprecated stub pointing at the three above
+│   ├── eval_judge.py                   # Does the text judge agree with fixed labels?
+│   ├── eval_video_judge.py             # Same for the video judge, plus --repeat stability
+│   └── run_evals.py                    # Deprecated stub pointing at the four above
 ├── tests/
 │   ├── test_pipeline.py                # Mocked pipeline behaviour
 │   └── test_regressions.py             # Defects found in review, kept fixed
@@ -207,7 +244,8 @@ campaign-studio/
 │   └── arize_setup.py                  # Arize OTel setup. Pure instrumentation.
 ├── data/
 │   ├── golden_dataset.csv              # 20 briefs for the retrieval and end-to-end evals
-│   ├── judge_eval_set.csv              # 16 frozen cases for the judge eval
+│   ├── judge_eval_set.csv              # 16 frozen cases for the text judge eval
+│   ├── video_judge_eval_set.csv        # 5 frozen shots for the video judge eval
 │   ├── LABELING_GUIDE.md               # How to label them, with the boundary rulings
 │   └── brand_docs/
 │       ├── verdant_brand_guide.txt
