@@ -293,10 +293,10 @@ with st.sidebar:
             st.markdown(f"{'🔴' if 'poisoned' in d else '🟢'} `{d}`")
 
         try:
-            from agents.brand_research_agent import _get_collection
+            from pipeline.retrieval import _get_collection
             coll = _get_collection(include_poisoned=config["include_poisoned"])
             st.caption(f"{coll.count()} chunks indexed")
-        except:
+        except Exception:
             pass
 
     with st.expander("❓ How it works", expanded=False):

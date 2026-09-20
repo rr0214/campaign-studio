@@ -9,8 +9,9 @@ Brand facts are retrieved fresh on every call. Nothing from a prior cycle — no
 chunks, not prior copy, not audience comments — reaches this step. That is
 enforced by the signature: there is nowhere to pass it.
 
-Vector-store code is duplicated from agents/brand_research_agent.py rather than
-imported, so retiring agents/ later is a clean delete instead of an unwind.
+Vector-store setup lives here rather than in a shared module. It originated in
+the research agent this pipeline replaced; kept local so retrieval owns its own
+store.
 """
 
 import os
