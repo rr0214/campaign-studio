@@ -4,18 +4,18 @@ Claim Grounding Check
 Checks whether generated campaign text is actually supported by the brand
 documents the pipeline retrieved — as opposed to whether retrieval *found*
 relevant-looking documents, which is all `_calculate_grounding_score()` in
-Agent 1 measures.
+the retrieval score measures.
 
 The cascade, cheapest first:
 
   Layer 1 — deterministic (free, no model calls)
-      1a. prohibited phrase   → reuses check_brand_policy() from Agent 2
+      1a. prohibited phrase   → reuses check_brand_policy() from brand_policy.py
       1b. unapproved statistic → any number not in the brand guide's approved set
       1c. competitor named     → brand guide prohibits naming competitors
 
   Layer 2 — LLM judge (only reached by text that passed layer 1)
-      Compares the campaign text against the chunks Agent 1 actually
-      retrieved. Comparing against retrieved chunks rather than all four
+      Compares the campaign text against the chunks retrieval actually
+      returned. Comparing against retrieved chunks rather than all four
       brand docs is deliberate: it makes retrieval failure visible.
 
 The failure this exists to catch is a dropped qualifier. The sources say
@@ -193,9 +193,8 @@ JUDGE_MODEL = "gpt-5.6-terra"
 
 def format_sources(retrieved_chunks) -> str:
     """
-    Render Agent 1's retrieved chunks as the judge's comparison set.
-    Accepts ResearchResult.retrieved_chunks (list of dicts) or the already-joined
-    CampaignStrategy.retrieved_facts string that Agent 2 propagates forward.
+    Render the retrieved chunks as the judge's comparison set.
+    Accepts a list of chunk dicts, or an already-joined sources string.
     """
     if isinstance(retrieved_chunks, str):
         return retrieved_chunks.strip() or "(no documents retrieved)"
@@ -211,9 +210,9 @@ def format_sources(retrieved_chunks) -> str:
 
 def campaign_text_for_check(strategy) -> str:
     """
-    The publishable copy: tagline, concept, key messages. Risk flags are
-    deliberately excluded — they quote the claims Agent 2 *rejected*, and
-    scanning them would halt campaigns that correctly caught their own problems.
+    The publishable copy: tagline, concept, key messages. Any list of rejected
+    claims is deliberately excluded — it quotes what was already caught, and
+    scanning it would halt campaigns that correctly caught their own problems.
     """
     parts = [
         strategy.tagline or "",
@@ -373,7 +372,7 @@ def run_deterministic_checks(
     upstream_hallucination_flag: bool = False,
 ) -> Optional[GroundingCheckResult]:
     """Layer 1. Returns a failing result, or None if all checks pass."""
-    # 1a — prohibited phrase (reuses Agent 2's policy tool unchanged)
+    # 1a — prohibited phrase (reuses the shared policy check unchanged)
     policy = check_brand_policy(text)
     if policy["status"] == "PROHIBITED":
         phrase = re.search(r"'([^']+)'", policy["reason"])
@@ -419,9 +418,9 @@ def run_deterministic_checks(
             ),
         )
 
-    # Agent 2's own prohibited-phrase heuristic catches a few strings the policy
-    # tool does not ("all manufacturing is fair trade", "switch to"). Free signal,
-    # so it belongs in layer 1 rather than after a judge call.
+    # The generator-side prohibited-phrase heuristic catches a few strings the
+    # policy tool does not ("all manufacturing is fair trade", "switch to"). Free
+    # signal, so it belongs in layer 1 rather than after a judge call.
     if upstream_hallucination_flag:
         return GroundingCheckResult(
             passed=False,
@@ -429,7 +428,7 @@ def run_deterministic_checks(
             failure_type=PROHIBITED_PHRASE,
             claim_flagged=text[:200],
             reason=(
-                "Pipeline halted: Agent 2 flagged prohibited brand claims in this campaign "
+                "Pipeline halted: prohibited brand claims were flagged in this campaign "
                 "strategy. No creative assets were generated from unverified content."
             ),
         )

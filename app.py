@@ -251,7 +251,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### ⚙️ Settings")
 
-    # trust_aware is gone. It existed so Agent 2 could inherit Agent 1's confidence;
+    # trust_aware is gone. It existed so one agent could inherit another's confidence;
     # there are no agents and nothing to propagate between. The remaining toggles
     # both change what RETRIEVE returns, which is the only input VERIFY can react to.
     FAILURE_CONFIGS = {
@@ -285,7 +285,7 @@ with st.sidebar:
 
     st.markdown("---")
     with st.expander("📚 Brand document index", expanded=False):
-        st.caption("The source documents Agent 1 searches. These are the ground truth for every brand claim.")
+        st.caption("The source documents Retrieve searches. These are the ground truth for every brand claim.")
         docs = ["verdant_brand_guide.txt", "verdant_products.txt", "verdant_sustainability.txt"]
         if config["include_poisoned"]:
             docs.append("verdant_poisoned.txt ⚠️")

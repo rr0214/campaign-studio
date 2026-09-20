@@ -121,7 +121,7 @@ Use the sidebar toggle to switch between scenarios:
 2. ⚠️ **Weak retrieval** — one chunk instead of four, so claims may have no retrieved source to check against
 3. 🔴 **Prompt injection** — an adversarial document tries to hijack the output; Verify reads the generated text, not the instruction
 
-The old "trust gap" and "trust-aware" scenarios are gone. They existed so Agent 2 could inherit Agent 1's confidence score; there are no agents and nothing to propagate between.
+The old "trust gap" and "trust-aware" scenarios are gone. They existed so one agent could inherit another's confidence score; this is a pipeline and there is nothing to propagate between.
 
 ## Setup
 
