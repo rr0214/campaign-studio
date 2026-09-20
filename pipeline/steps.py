@@ -30,9 +30,9 @@ from pipeline.usage_capture import capture_openai_usage, sum_usage  # noqa: F401
 
 GENERATE_MODEL = "gpt-5.6-luna"
 
-# Agent 2's old prohibited-phrase heuristic caught two strings that
-# check_brand_policy does not. There is no Agent 2 any more, so the check moves
-# here rather than being silently dropped.
+# The old strategy agent's prohibited-phrase heuristic caught two strings that
+# check_brand_policy does not. That agent is gone, so the check moves here
+# rather than being silently dropped.
 EXTRA_PROHIBITED = ["all manufacturing is fair trade", "switch to"]
 
 VERDANT_WRITING_DIRECTION = """HOW TO WRITE IT — this is about the writing, not the facts:
