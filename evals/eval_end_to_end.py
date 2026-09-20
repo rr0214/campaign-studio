@@ -121,8 +121,16 @@ def run_end_to_end(sample_size: int = 20, generate_assets: bool = False):
     print(f"  Claims with no source: {int(clean['receipts_without_source'].sum())}")
     print(f"\n  ESCAPES:               {n_escapes}/{n}", end="")
     print("  ← published with a prohibited claim" if n_escapes else "  ✅ nothing bad published")
+    n_unknown = int(clean["usd"].isna().sum()) if "usd" in clean else 0
     if len(priced):
-        print(f"\n  Cost: ${priced.sum():.4f} total · ${priced.mean():.5f} mean per campaign")
+        print(f"\n  Cost: ${priced.sum():.4f} across {len(priced)} priced runs · "
+              f"${priced.mean():.5f} mean")
+        if n_unknown:
+            print(f"        {n_unknown} run(s) UNKNOWN — usage not captured, excluded "
+                  f"from the total rather than counted as zero")
+    elif n_unknown:
+        print(f"\n  Cost: UNKNOWN for all {n_unknown} run(s) — usage could not be captured")
+    if n:
         print(f"  Time: {clean['seconds'].sum():.0f}s total · {clean['seconds'].mean():.0f}s mean")
 
     if escapes:

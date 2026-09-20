@@ -106,7 +106,14 @@ check("one verify attempt", len(r.verify_events) == 1)
 check("receipts attached", len(r.routing.receipts) == 1)
 check("receipt located a source", r.routing.receipts[0]["source_found"])
 check("cost has generate step", "generate" in r.cost.breakdown())
-check("cost usd computed", r.cost.total_usd is not None, f"${r.cost.total_usd}")
+# Under mocks the judge never makes a real API call, so its usage is genuinely
+# uncaptured and the run total is correctly withheld. It used to come back as
+# $0.00 — see tests/test_regressions.py, defect 2. What must still hold is that
+# the steps we DO own are priced.
+check("generate step is priced", r.cost.breakdown()["generate"]["state"] == "known",
+      str(r.cost.breakdown()["generate"]))
+check("total withheld while a step is unmeasured", r.cost.total_usd is None,
+      repr(r.cost.total_usd))
 
 # ── 2. deterministic catch, judge never called, repair fixes it ─────────────
 judge_calls = {"n": 0}
@@ -156,7 +163,9 @@ r = run("judge flags broadened claim → FLAGGED",
 check("caught by judge", r.check_layer == "judge", r.check_layer)
 check("failure UNSUPPORTED_CLAIM", r.failure_type == "UNSUPPORTED_CLAIM", str(r.failure_type))
 check("final FLAGGED", r.final_status == "FLAGGED", r.final_status)
-check("judge cost measured", r.cost.breakdown().get("verify", {}).get("usd") is not None)
+check("judge cost reported as unknown under mocks",
+      r.cost.breakdown().get("verify", {}).get("state") == "unknown",
+      str(r.cost.breakdown().get("verify")))
 
 # ── 5. sampling: sampled items still publish ────────────────────────────────
 always = random.Random()

@@ -55,6 +55,20 @@ class StepCost:
     def usd_available(self) -> bool:
         return self.usd is not None
 
+    @property
+    def cost_state(self) -> str:
+        """'known' · 'free' · 'unknown' — never collapse the last two."""
+        if not self.measured:
+            return "unknown"
+        if self.usd is None:
+            return "unknown"
+        return "free" if self.usd == 0 else "known"
+
+    def display_usd(self) -> str:
+        return {"unknown": "unknown", "free": "$0.00000"}.get(
+            self.cost_state, f"${self.usd:.6f}" if self.usd is not None else "unknown"
+        )
+
 
 def price_usage(
     step: str,
@@ -75,6 +89,19 @@ def price_usage(
 
     tier_exceeded = prompt_tokens > LONG_CONTEXT_THRESHOLD_TOKENS
     tier = TIER_LONG if tier_exceeded else TIER_SHORT
+
+    if not measured:
+        # A call whose usage we failed to capture is UNKNOWN, not free. Returning
+        # 0.0 here made an unmeasured step indistinguishable from a genuinely free
+        # one (a deterministic catch, which really does cost nothing), and the
+        # run total silently absorbed it. Two different facts; two different values.
+        return StepCost(
+            step=step, model=model,
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens, cached_tokens=cached_tokens,
+            total_tokens=total, usd=None, pricing_tier=TIER_UNKNOWN,
+            measured=False, tier_exceeded=tier_exceeded,
+        )
 
     rates = PRICES_USD_PER_1M.get(model)
     if rates is None or any(rates.get(k) is None for k in ("input", "cached_input", "output")):
@@ -137,12 +164,25 @@ class CostMeter:
 
     @property
     def total_usd(self) -> Optional[float]:
-        """None if any measured step could not be priced — a partial total would mislead."""
+        """
+        None if any step is unknown — a partial total would read as a complete one.
+        A genuinely free step (usd == 0.0, measured) does not make the total unknown.
+        """
         if not self.steps:
             return 0.0
-        if any(s.usd is None for s in self.steps):
+        if any(s.usd is None or not s.measured for s in self.steps):
             return None
         return round(sum(s.usd for s in self.steps), 8)
+
+    @property
+    def has_unknown(self) -> bool:
+        return any(s.cost_state == "unknown" for s in self.steps)
+
+    def display_total(self) -> str:
+        if self.total_usd is None:
+            unknown = [s.step for s in self.steps if s.cost_state == "unknown"]
+            return f"unknown ({', '.join(unknown)} not measured)" if unknown else "unknown"
+        return f"${self.total_usd:.5f}"
 
     @property
     def pricing_tier(self) -> str:
@@ -159,4 +199,5 @@ class CostMeter:
         return [s.step for s in self.steps if not s.measured]
 
     def breakdown(self) -> dict:
-        return {s.step: {"tokens": s.total_tokens, "usd": s.usd} for s in self.steps}
+        return {s.step: {"tokens": s.total_tokens, "usd": s.usd,
+                         "state": s.cost_state} for s in self.steps}

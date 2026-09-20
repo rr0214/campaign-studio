@@ -479,8 +479,7 @@ def render_diagnostics(run, step_times=None, heading="Diagnostics"):
             st.markdown(f"<div class='diag-total'>Total {total_s:.1f}s</div>",
                         unsafe_allow_html=True)
 
-        usd = run.cost.total_usd
-        cost_txt = f"${usd:.5f}" if usd is not None else "unavailable"
+        cost_txt = run.cost.display_total()
         st.markdown(
             f"<div class='diag-total' style='margin-top:14px;'>{cost_txt}"
             f"<span style='font-weight:400; color:var(--ink-4);'> · "
@@ -488,12 +487,16 @@ def render_diagnostics(run, step_times=None, heading="Diagnostics"):
             unsafe_allow_html=True,
         )
         for c in run.cost.steps:
-            amt = f"${c.usd:.6f}" if c.usd is not None else "n/a"
+            amt = c.display_usd()
             st.markdown(
                 f"<div class='diag-row'><span>{c.step}</span>"
                 f"<span class='t'>{amt}</span></div>", unsafe_allow_html=True)
         if run.cost.tier_exceeded:
             st.caption("Crossed into the long-context pricing tier — verify the rate.")
+        if run.cost.has_unknown:
+            st.caption("Some steps report **unknown** cost — usage could not be captured. "
+                       "That is not the same as free; the run total is withheld rather "
+                       "than under-reported.")
 
         # The exact text sent to each model on this run — rendered, not the
         # template. Collapsed, because it is long and only wanted when debugging
@@ -920,10 +923,16 @@ if run_btn and user_prompt.strip():
                         + "</div>", unsafe_allow_html=True)
 
         priced = [c["run"].cost.total_usd for c in completed if c["run"].cost.total_usd is not None]
+        unknown_cycles = [c["n"] for c in completed if c["run"].cost.total_usd is None]
         if priced:
+            note = (f" · cycle(s) {', '.join(map(str, unknown_cycles))} unknown"
+                    if unknown_cycles else "")
             st.markdown(f"<div class='chip-sub'>Series total ${sum(priced):.5f} across "
-                        f"{len(completed)} campaigns · mean ${sum(priced)/len(priced):.5f}"
-                        f"</div>", unsafe_allow_html=True)
+                        f"{len(priced)} priced campaigns · mean "
+                        f"${sum(priced)/len(priced):.5f}{note}</div>", unsafe_allow_html=True)
+        elif completed:
+            st.markdown("<div class='chip-sub'>Series cost unknown — usage could not be "
+                        "captured for these runs.</div>", unsafe_allow_html=True)
 
         with pipeline_status.container():
             for c in completed:

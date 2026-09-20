@@ -22,9 +22,11 @@ supports is worse than an unchecked model, because the policy layer lends it a
 credential the evidence does not.
 """
 
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 BRAND_DOCS_DIR = Path(__file__).parent / "data" / "brand_docs"
 
@@ -147,6 +149,48 @@ def _traceable_keys() -> set:
     return _traceable_cache
 
 
+# Every approved claim is partial or qualified — 87% not all, 45,000+ since 2021
+# not annually, recycled polyester in garments not everywhere. So a universal
+# quantifier applied to any of them is an overstatement by construction, and a
+# negation inverts it. Either way the sentence is no longer the approved claim.
+_OVERSTATEMENTS = [
+    "100%", "all ", "every ", "entirely", "fully", "completely", "totally",
+    "always", "everything", "whole range", "any and all", "across the board",
+    "100 percent", "each and every",
+]
+_NEGATIONS = [
+    " not ", "n't", " never ", " no ", " no longer ", " none ", " without ",
+    " nothing ", " isn't", " aren't", " doesn't", " don't", " won't", " cannot ",
+    " zero ", " neither ", " nor ",
+]
+
+
+def _matches_key(key: str, claim_lower: str) -> bool:
+    """
+    Whole-word match, not a bare substring.
+
+    A substring test made "100% recycled materials" match the key "recycled" and
+    come back APPROVED — the policy layer stamping a claim that contradicts its
+    own source. Word boundaries are the floor; the modifier checks below are what
+    actually make it safe.
+    """
+    if not key.replace("%", "").replace(",", "").isalnum() and "%" not in key:
+        return key in claim_lower
+    return re.search(rf"(?<![\w%]){re.escape(key)}(?![\w%])", claim_lower) is not None
+
+
+def _disqualifying_modifier(claim_lower: str) -> Optional[str]:
+    """An overstatement or negation that makes this not the approved claim."""
+    padded = f" {claim_lower} "
+    for word in _OVERSTATEMENTS:
+        if word in padded:
+            return f"overstated by '{word.strip()}'"
+    for word in _NEGATIONS:
+        if word in padded:
+            return f"negated by '{word.strip()}'"
+    return None
+
+
 def check_brand_policy(claim: str) -> dict:
     claim_lower = claim.lower()
 
@@ -169,7 +213,19 @@ def check_brand_policy(claim: str) -> dict:
 
     traceable = _traceable_keys()
     for key, approved in APPROVED_CLAIMS.items():
-        if key.lower() in claim_lower:
+        if _matches_key(key.lower(), claim_lower):
+            modifier = _disqualifying_modifier(claim_lower)
+            if modifier:
+                # The approved wording is in there, but the sentence around it
+                # says something else. Not approved — a human decides.
+                return {
+                    "status": "UNVERIFIED",
+                    "claim_checked": claim,
+                    "reason": (f"Matches the approved claim '{approved.text}' but the "
+                               f"surrounding text changes it ({modifier}). "
+                               f"Requires human review."),
+                    "approved_alternative": approved.text,
+                }
             if key not in traceable:
                 # The entry exists but its source could not be located. Not
                 # approved — an untraceable claim is exactly what this guards against.
